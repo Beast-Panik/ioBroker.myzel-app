@@ -68,8 +68,9 @@ iobroker url https://github.com/Beast-Panik/ioBroker.myzel-app
 iobroker add myzel-app
 ```
 
-Im Admin geht es über „Adapter“, „Installieren aus eigener URL“, Reiter „Benutzerdefiniert“ mit derselben Adresse. Danach
-die Instanz anlegen. Läuft ioBroker in Docker, in den Einstellungen der Instanz unter „Adressen für Apps“ die Adresse des
+Im Admin geht es im Expertenmodus (Schalter unten links): „Adapter“, GitHub-Symbol „Installieren aus eigener URL“, Reiter
+„Benutzerdefiniert“, dieselbe Adresse. Der Dialog legt die Instanz gleich mit an. Im Test-ioBroker dauerte das rund
+50 s. Läuft ioBroker in Docker, in den Einstellungen der Instanz unter „Adressen für Apps“ die Adresse des
 Rechners mit Port 8095 eintragen; sonst ermittelt der Adapter sie selbst. Ein Update holt derselbe Befehl `iobroker url`,
 danach die Instanz neu starten.
 
