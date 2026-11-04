@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myzel.local/protokoll/app/v1/gemeinsam.schema.json",
+  "title": "Gemeinsame Bausteine, Protokoll myzel-app Version 1 und 2",
+  "$defs": {
+    "version": {
+      "description": "Protokollversion. Die App sendet die neueste, die sie kennt; der Adapter antwortet in dieser oder lehnt mit fehler version ab. 2 bringt die Geräte (geraete)",
+      "enum": [1, 2]
+    },
+    "kennung": {
+      "description": "ID von Profilen und Geräten",
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,40}$"
+    },
+    "zeit": {
+      "description": "Millisekunden seit 1970 (UTC), wie ts in ioBroker",
+      "type": "integer",
+      "minimum": 1577836800000,
+      "maximum": 4102444800000
+    },
+    "zeitstempel": {
+      "description": "ts eines Zustands aus ioBroker in ms; 0, wenn er fehlt. Ohne Untergrenze wie bei zeit, weil Datenpunkte jahrelang unverändert bleiben",
+      "type": "integer",
+      "minimum": 0
+    },
+    "nummer": {
+      "description": "Laufende Nummer einer Anfrage, von der App vergeben",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "appId": { "type": "string", "pattern": "^[a-z2-7]{8}$" },
+    "adapterId": { "type": "string", "pattern": "^[a-z2-7]{26}$" },
+    "zugang": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "geheimnis": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
+    "fingerabdruck": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "hinweisId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8}$" },
+    "objektId": {
+      "description": "ioBroker-ID; erlaubte Zeichen wie FORBIDDEN_CHARS in js-controller 7.2.2, höchstens 240 Zeichen",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[._\\-/ :!#$%&()+=@^{}|~\\p{Ll}\\p{Lu}\\p{Nd}]+$"
+    },
+    "wert": {
+      "description": "Wert eines Datenpunkts; JSON-Werte in ioBroker sind Zeichenketten",
+      "oneOf": [
+        { "type": "string", "maxLength": 65536 },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "adresse": {
+      "description": "host:port, IPv6 in eckigen Klammern",
+      "type": "string",
+      "maxLength": 270,
+      "pattern": "^(\\[[0-9a-fA-F:]+\\]|[A-Za-z0-9.-]+):[0-9]{1,5}$"
+    },
+    "geraet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["android", "appVersion"],
+      "properties": {
+        "android": { "type": "string", "maxLength": 20 },
+        "appVersion": { "type": "string", "maxLength": 40 }
+      }
+    },
+    "fehlercode": {
+      "enum": ["zugang", "version", "rechte", "ungueltig", "zuviel", "aus", "abgelehnt", "abgelaufen", "intern"]
+    }
+  }
+}

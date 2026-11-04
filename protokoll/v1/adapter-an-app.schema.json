@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myzel.local/protokoll/app/v1/adapter-an-app.schema.json",
+  "title": "Nachrichten vom Adapter an die App, Protokoll Version 1 und 2",
+  "description": "Die App prüft streng und trennt bei Verstoß. Neue Felder kommen nur mit einer neuen Protokollversion.",
+  "oneOf": [
+    { "$ref": "#/$defs/willkommen" },
+    { "$ref": "#/$defs/gekoppelt" },
+    { "$ref": "#/$defs/rechte" },
+    { "$ref": "#/$defs/werte" },
+    { "$ref": "#/$defs/aenderung" },
+    { "$ref": "#/$defs/quittung" },
+    { "$ref": "#/$defs/hinweis" },
+    { "$ref": "#/$defs/fehler" }
+  ],
+  "$defs": {
+    "datenpunkt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "typ", "recht"],
+      "properties": {
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+        "name": { "type": "string", "maxLength": 200 },
+        "typ": { "enum": ["number", "string", "boolean", "json", "mixed", "array", "object", "file"] },
+        "rolle": { "type": "string", "maxLength": 100 },
+        "einheit": { "type": "string", "maxLength": 30 },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "schritt": { "type": "number" },
+        "auswahl": {
+          "description": "common.states: Wert als Zeichenkette auf Anzeigetext",
+          "type": "object",
+          "maxProperties": 200,
+          "additionalProperties": { "type": "string", "maxLength": 200 }
+        },
+        "recht": { "enum": ["lesen", "schreiben"] }
+      }
+    },
+    "gruppe": {
+      "description": "Raum oder Funktion; mitglieder nur erlaubte Datenpunkte",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "mitglieder"],
+      "properties": {
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+        "name": { "type": "string", "maxLength": 200 },
+        "mitglieder": { "type": "array", "items": { "$ref": "gemeinsam.schema.json#/$defs/objektId" } }
+      }
+    },
+    "geraet": {
+      "description": "Gerät im Haus aus mehreren Datenpunkten, nicht das Handy. Nur ab Protokollversion 2; teile nennt nur erlaubte Datenpunkte aus datenpunkte",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "typ", "teile"],
+      "properties": {
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/kennung" },
+        "name": { "type": "string", "maxLength": 200 },
+        "typ": { "enum": ["lampe"] },
+        "teile": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "schalten": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+            "helligkeit": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+            "farbe": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+            "farbtemperatur": { "$ref": "gemeinsam.schema.json#/$defs/objektId" }
+          }
+        }
+      }
+    },
+    "rechteInhalt": {
+      "type": "object",
+      "required": ["profil", "datenpunkte", "raeume", "funktionen", "handydaten"],
+      "properties": {
+        "profil": { "type": "string", "maxLength": 60 },
+        "datenpunkte": { "type": "array", "items": { "$ref": "#/$defs/datenpunkt" } },
+        "raeume": { "type": "array", "items": { "$ref": "#/$defs/gruppe" } },
+        "funktionen": { "type": "array", "items": { "$ref": "#/$defs/gruppe" } },
+        "geraete": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/geraet" } },
+        "handydaten": {
+          "description": "Was der Adapter von dieser App annimmt",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["akku", "anruf", "benachrichtigung"],
+          "properties": {
+            "akku": { "type": "boolean" },
+            "anruf": { "type": "boolean" },
+            "benachrichtigung": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "zustand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["val", "ack", "ts"],
+      "properties": {
+        "val": { "$ref": "gemeinsam.schema.json#/$defs/wert" },
+        "ack": { "type": "boolean" },
+        "ts": { "$ref": "gemeinsam.schema.json#/$defs/zeitstempel" }
+      }
+    },
+    "zustaende": {
+      "description": "ID auf Zustand; null, wenn der Datenpunkt keinen Wert hat",
+      "type": "object",
+      "propertyNames": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+      "additionalProperties": { "oneOf": [{ "$ref": "#/$defs/zustand" }, { "type": "null" }] }
+    },
+    "willkommen": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/rechteInhalt" }],
+      "unevaluatedProperties": false,
+      "required": ["t", "v", "adapter", "adressen"],
+      "properties": {
+        "t": { "const": "willkommen" },
+        "v": { "$ref": "gemeinsam.schema.json#/$defs/version" },
+        "adapter": { "$ref": "gemeinsam.schema.json#/$defs/adapterId" },
+        "adressen": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "gemeinsam.schema.json#/$defs/adresse" }
+        }
+      }
+    },
+    "gekoppelt": {
+      "description": "Antwort auf koppeln nach Bestätigung im Admin; danach folgt willkommen in derselben Verbindung",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "app", "zugang"],
+      "properties": {
+        "t": { "const": "gekoppelt" },
+        "app": { "$ref": "gemeinsam.schema.json#/$defs/appId" },
+        "zugang": { "$ref": "gemeinsam.schema.json#/$defs/zugang" }
+      }
+    },
+    "rechte": {
+      "description": "Neuer Stand, wenn sich Profil, Räume, Funktionen, Datenpunkte, Systemsprache oder eingeschaltete Handydaten ändern",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/rechteInhalt" }],
+      "unevaluatedProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "rechte" } }
+    },
+    "werte": {
+      "description": "Antwort auf abo: aktueller Stand der abonnierten IDs, bei großen Antworten in mehreren Teilen; jede ID steht in genau einem Teil",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "werte"],
+      "properties": {
+        "t": { "const": "werte" },
+        "werte": { "$ref": "#/$defs/zustaende" }
+      }
+    },
+    "aenderung": {
+      "description": "Änderungen, vom Adapter bis zu 100 ms gesammelt, bei großen Mengen in mehreren Teilen",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "werte"],
+      "properties": {
+        "t": { "const": "aenderung" },
+        "werte": { "$ref": "#/$defs/zustaende" }
+      }
+    },
+    "quittung": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "n", "ok"],
+      "properties": {
+        "t": { "const": "quittung" },
+        "n": { "$ref": "gemeinsam.schema.json#/$defs/nummer" },
+        "ok": { "type": "boolean" },
+        "fehler": { "$ref": "gemeinsam.schema.json#/$defs/fehlercode" }
+      }
+    },
+    "hinweis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "id", "text", "wichtigkeit", "zeit"],
+      "properties": {
+        "t": { "const": "hinweis" },
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/hinweisId" },
+        "titel": { "type": "string", "maxLength": 200 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "wichtigkeit": { "enum": ["normal", "hoch"] },
+        "zeit": { "$ref": "gemeinsam.schema.json#/$defs/zeit" }
+      }
+    },
+    "fehler": {
+      "description": "Bei zugang, version, abgelehnt und abgelaufen trennt der Adapter danach die Verbindung",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "code"],
+      "properties": {
+        "t": { "const": "fehler" },
+        "code": { "$ref": "gemeinsam.schema.json#/$defs/fehlercode" },
+        "text": { "type": "string", "maxLength": 300 },
+        "n": { "$ref": "gemeinsam.schema.json#/$defs/nummer" },
+        "unterstuetzt": {
+          "description": "Nur bei code version: unterstützte Protokollversionen",
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

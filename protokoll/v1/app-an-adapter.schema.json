@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myzel.local/protokoll/app/v1/app-an-adapter.schema.json",
+  "title": "Nachrichten von der App an den Adapter, Protokoll Version 1 und 2",
+  "description": "Jede Nachricht ist ein JSON-Objekt in einem WebSocket-Textframe, höchstens 64 KiB. Unbekannte Felder sind Fehler.",
+  "oneOf": [
+    { "$ref": "#/$defs/hallo" },
+    { "$ref": "#/$defs/koppeln" },
+    { "$ref": "#/$defs/abo" },
+    { "$ref": "#/$defs/setze" },
+    { "$ref": "#/$defs/akku" },
+    { "$ref": "#/$defs/anruf" },
+    { "$ref": "#/$defs/benachrichtigung" },
+    { "$ref": "#/$defs/angezeigt" }
+  ],
+  "$defs": {
+    "hallo": {
+      "description": "Erste Nachricht einer gekoppelten App, innerhalb von 10 s nach Verbindungsaufbau",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "v", "app", "zugang", "geraet"],
+      "properties": {
+        "t": { "const": "hallo" },
+        "v": { "$ref": "gemeinsam.schema.json#/$defs/version" },
+        "app": { "$ref": "gemeinsam.schema.json#/$defs/appId" },
+        "zugang": { "$ref": "gemeinsam.schema.json#/$defs/zugang" },
+        "geraet": { "$ref": "gemeinsam.schema.json#/$defs/geraet" }
+      }
+    },
+    "koppeln": {
+      "description": "Erste Nachricht einer noch nicht gekoppelten App, mit dem Einmalgeheimnis aus dem QR-Code",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "v", "geheimnis", "name", "geraet"],
+      "properties": {
+        "t": { "const": "koppeln" },
+        "v": { "$ref": "gemeinsam.schema.json#/$defs/version" },
+        "geheimnis": { "$ref": "gemeinsam.schema.json#/$defs/geheimnis" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "geraet": { "$ref": "gemeinsam.schema.json#/$defs/geraet" }
+      }
+    },
+    "abo": {
+      "description": "Ersetzt das bisherige Abo vollständig; leere Liste beendet es",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "ids"],
+      "properties": {
+        "t": { "const": "abo" },
+        "ids": {
+          "type": "array",
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": { "type": "string", "$ref": "gemeinsam.schema.json#/$defs/objektId" }
+        }
+      }
+    },
+    "setze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "n", "id", "val"],
+      "properties": {
+        "t": { "const": "setze" },
+        "n": { "$ref": "gemeinsam.schema.json#/$defs/nummer" },
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
+        "val": { "$ref": "gemeinsam.schema.json#/$defs/wert" }
+      }
+    },
+    "akku": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "stand", "laedt", "zeit"],
+      "properties": {
+        "t": { "const": "akku" },
+        "stand": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "laedt": { "type": "boolean" },
+        "zeit": { "$ref": "gemeinsam.schema.json#/$defs/zeit" }
+      }
+    },
+    "anruf": {
+      "description": "Nummer und Name fehlen bei frei, bei unterdrückter Nummer und wenn kein Kontakt passt",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "status", "zeit"],
+      "properties": {
+        "t": { "const": "anruf" },
+        "status": { "enum": ["frei", "klingelt", "gespraech"] },
+        "richtung": { "enum": ["eingehend", "ausgehend"] },
+        "nummer": { "type": "string", "maxLength": 40, "pattern": "^[+0-9*#]+$" },
+        "name": { "type": "string", "maxLength": 100 },
+        "zeit": { "$ref": "gemeinsam.schema.json#/$defs/zeit" }
+      }
+    },
+    "benachrichtigung": {
+      "description": "Benachrichtigung einer anderen App auf dem Handy; Titel und Text kürzt der Adapter auf die eingestellte Länge",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "app", "paket", "zeit"],
+      "properties": {
+        "t": { "const": "benachrichtigung" },
+        "app": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "paket": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.]+$" },
+        "titel": { "type": "string", "maxLength": 4000 },
+        "text": { "type": "string", "maxLength": 16000 },
+        "zeit": { "$ref": "gemeinsam.schema.json#/$defs/zeit" },
+        "nachgeliefert": { "type": "boolean" }
+      }
+    },
+    "angezeigt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "id"],
+      "properties": {
+        "t": { "const": "angezeigt" },
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/hinweisId" }
+      }
+    }
+  }
+}

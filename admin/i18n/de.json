@@ -1,0 +1,18 @@
+{
+    "Connection in home network": "Verbindung im Heimnetz",
+    "Port for apps": "Port für Apps",
+    "Addresses for apps": "Adressen für Apps",
+    "Addresses help": "host:port, wie das Handy den ioBroker erreicht, höchstens 4. Leer: automatisch ermittelt. Nötig, wenn ioBroker in Docker läuft.",
+    "Time limits": "Fristen",
+    "Presence grace period": "Anwesenheit endet nach Trennung erst nach",
+    "Expiry of hints": "Wartende Hinweise verfallen nach",
+    "Length of notification texts": "Titel und Text von Benachrichtigungen kürzen nach",
+    "min": "Min.",
+    "characters": "Zeichen",
+    "Reload hint": "Nach einem Neustart der Instanz, etwa nach dem Speichern dieser Seite, die Seite neu laden, bevor Apps gekoppelt werden.",
+    "Apps": "Apps",
+    "Room": "Raum",
+    "Right": "Recht",
+    "Data point": "Datenpunkt",
+    "Data point or device": "Datenpunkt oder Gerät"
+}

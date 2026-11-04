@@ -1,0 +1,138 @@
+{
+    "common": {
+        "name": "myzel-app",
+        "version": "0.1.0",
+        "news": {
+            "0.1.0": {
+                "en": "Devices as tiles: create lamps in the device manager from on and off, brightness, RGB colour and colour temperature; protocol 2 sends them to the app, apps with protocol 1 keep seeing single datapoints",
+                "de": "Geräte als Kacheln: Lampen im Gerätemanager aus An und aus, Helligkeit, Farbe RGB und Lichtfarbe anlegen; Protokoll 2 schickt sie an die App, Apps mit Protokoll 1 sehen weiter einzelne Datenpunkte"
+            },
+            "0.0.9": {
+                "en": "Security review: connections only from the home network, bounded queues and buffers, values in parts, blocks per IPv6 /64, alias targets checked, app data only via single grants, warning for admin without login",
+                "de": "Sicherheitsprüfung: Verbindungen nur aus dem Heimnetz, begrenzte Warteschlangen und Puffer, Werte in Teilen, Sperren je IPv6-/64, Alias-Ziele geprüft, App-Daten nur über Einzelfreigaben, Warnung bei Admin ohne Anmeldung"
+            },
+            "0.0.8": {
+                "en": "Device manager: pair apps by QR code, edit profiles, choose profile and phone data per app, remove apps",
+                "de": "Gerätemanager: Apps per QR-Code koppeln, Profile bearbeiten, je App Profil und Handydaten wählen, Apps entfernen"
+            },
+            "0.0.7": {
+                "en": "Catalog keeps datapoint names only in the system language: about a third of the memory",
+                "de": "Katalog hält Namen der Datenpunkte nur in der Systemsprache: etwa ein Drittel des Speichers"
+            },
+            "0.0.6": {
+                "en": "Notices to the phone with queue, deadline and status",
+                "de": "Hinweise ans Handy mit Warteschlange, Frist und Status"
+            },
+            "0.0.5": {
+                "en": "Phone data: presence, battery, calls and notifications",
+                "de": "Handydaten: Anwesenheit, Akku, Anrufe und Benachrichtigungen"
+            },
+            "0.0.4": {
+                "en": "Rights follow changes to profiles, rooms, functions and objects while apps are connected",
+                "de": "Rechte folgen Änderungen an Profilen, Räumen, Funktionen und Objekten, während Apps verbunden sind"
+            },
+            "0.0.3": {
+                "en": "Read and write datapoints by profile, rooms and functions",
+                "de": "Datenpunkte lesen und schreiben nach Profil, Räumen und Funktionen"
+            },
+            "0.0.2": {
+                "en": "TLS server for apps, pairing, login, rate limits",
+                "de": "TLS-Server für Apps, Kopplung, Anmeldung, Ratenbegrenzung"
+            },
+            "0.0.1": {
+                "en": "Scaffold",
+                "de": "Gerüst"
+            }
+        },
+        "titleLang": {
+            "en": "Myzel App",
+            "de": "Myzel-App"
+        },
+        "desc": {
+            "en": "Connects the Myzel app with ioBroker",
+            "de": "Verbindet die Myzel-App mit ioBroker"
+        },
+        "authors": [
+            "Beast-Panik <55361239+Beast-Panik@users.noreply.github.com>"
+        ],
+        "keywords": [
+            "app",
+            "android",
+            "myzel"
+        ],
+        "platform": "Javascript/Node.js",
+        "icon": "myzel-app.png",
+        "enabled": true,
+        "loglevel": "info",
+        "tier": 3,
+        "mode": "daemon",
+        "type": "communication",
+        "compact": false,
+        "connectionType": "local",
+        "dataSource": "push",
+        "adminUI": {
+            "config": "json"
+        },
+        "supportedMessages": {
+            "deviceManager": true
+        },
+        "dependencies": [
+            {
+                "js-controller": ">=7.2.2"
+            }
+        ],
+        "globalDependencies": [
+            {
+                "admin": ">=8.0.11"
+            }
+        ]
+    },
+    "native": {
+        "port": 8095,
+        "adressen": [],
+        "nachlaufMin": 5,
+        "hinweisFristMin": 60,
+        "textLaenge": 1000
+    },
+    "objects": [],
+    "instanceObjects": [
+        {
+            "_id": "info",
+            "type": "channel",
+            "common": {
+                "name": {
+                    "en": "Information",
+                    "de": "Information"
+                }
+            },
+            "native": {}
+        },
+        {
+            "_id": "info.connection",
+            "type": "state",
+            "common": {
+                "role": "indicator.connected",
+                "name": {
+                    "en": "Server for apps is running",
+                    "de": "Server für Apps läuft"
+                },
+                "type": "boolean",
+                "read": true,
+                "write": false,
+                "def": false
+            },
+            "native": {}
+        },
+        {
+            "_id": "apps",
+            "type": "folder",
+            "common": {
+                "name": {
+                    "en": "Paired apps",
+                    "de": "Gekoppelte Apps"
+                }
+            },
+            "native": {}
+        }
+    ]
+}

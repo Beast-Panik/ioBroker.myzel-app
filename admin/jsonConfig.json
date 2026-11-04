@@ -1,0 +1,76 @@
+{
+    "i18n": true,
+    "type": "panel",
+    "items": {
+        "_kopfVerbindung": {
+            "type": "header",
+            "text": "Connection in home network",
+            "size": 3
+        },
+        "port": {
+            "type": "port",
+            "label": "Port for apps",
+            "min": 1024,
+            "max": 65535,
+            "xs": 12,
+            "sm": 6,
+            "md": 3
+        },
+        "adressen": {
+            "type": "chips",
+            "label": "Addresses for apps",
+            "help": "Addresses help",
+            "xs": 12,
+            "md": 9
+        },
+        "_kopfFristen": {
+            "type": "header",
+            "text": "Time limits",
+            "size": 3,
+            "newLine": true
+        },
+        "nachlaufMin": {
+            "type": "number",
+            "label": "Presence grace period",
+            "unit": "min",
+            "min": 1,
+            "max": 120,
+            "xs": 12,
+            "sm": 4
+        },
+        "hinweisFristMin": {
+            "type": "number",
+            "label": "Expiry of hints",
+            "unit": "min",
+            "min": 1,
+            "max": 1440,
+            "xs": 12,
+            "sm": 4
+        },
+        "textLaenge": {
+            "type": "number",
+            "label": "Length of notification texts",
+            "unit": "characters",
+            "min": 100,
+            "max": 4000,
+            "xs": 12,
+            "sm": 4
+        },
+        "_neuLaden": {
+            "type": "staticText",
+            "text": "Reload hint",
+            "newLine": true,
+            "xs": 12
+        },
+        "_kopfApps": {
+            "type": "header",
+            "text": "Apps",
+            "size": 3,
+            "newLine": true
+        },
+        "geraete": {
+            "type": "deviceManager",
+            "xs": 12
+        }
+    }
+}

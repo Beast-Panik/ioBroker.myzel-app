@@ -1,0 +1,18 @@
+{
+    "Connection in home network": "Connection in home network",
+    "Port for apps": "Port for apps",
+    "Addresses for apps": "Addresses for apps",
+    "Addresses help": "host:port as reachable from the phone, at most 4. Empty: detected automatically. Required if ioBroker runs in Docker.",
+    "Time limits": "Time limits",
+    "Presence grace period": "Presence grace period after disconnect",
+    "Expiry of hints": "Pending hints expire after",
+    "Length of notification texts": "Notification title and text are cut after",
+    "min": "min",
+    "characters": "characters",
+    "Reload hint": "After the instance restarted, for example after saving this page, reload this page before pairing apps.",
+    "Apps": "Apps",
+    "Room": "Room",
+    "Right": "Right",
+    "Data point": "Data point",
+    "Data point or device": "Data point or device"
+}
