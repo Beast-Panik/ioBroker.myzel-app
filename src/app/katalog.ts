@@ -1,24 +1,12 @@
 import type { Protokoll } from '../basis/grenzen';
+import type { Konfiguration } from './konfiguration';
 import { appIdAus } from './objekte';
-import {
-    type Aufzaehlung,
-    type Geraet,
-    type Merkmale,
-    type Objektquelle,
-    type Profil,
-    alsGeraet,
-    alsProfil,
-    istKennung,
-    liegtUnter,
-    merkmale,
-} from './rechte';
+import { type Aufzaehlung, type Karte, type Merkmale, type Objektquelle, type Profil, merkmale } from './rechte';
 
 // Wie Admin: Englisch, solange im System keine Sprache gesetzt ist
 const SPRACHE = 'en';
 
 export type Objektaenderung = ioBroker.Object | null | undefined;
-
-const KENNUNG = 'ID erlaubt nur a bis z, 0 bis 9 und _';
 
 // Eigene Schnittstelle, damit der Katalog ohne ioBroker testbar ist.
 export interface Katalogquelle {
@@ -27,23 +15,19 @@ export interface Katalogquelle {
 }
 
 /**
- * Alles, wovon die Rechte abhängen, im Speicher: Datenpunkte, Räume, Funktionen, Profile, Geräte, Systemsprache.
- * Eine Ansichtsabfrage durchläuft in der Objektdatenbank alle Objekte. Je Raummitglied eine Abfrage würde den
- * js-controller bei jeder Anmeldung und jeder Neuberechnung belasten; so wird einmal geladen und mit objectChange
- * nachgeführt.
+ * Alles, wovon die Rechte abhängen, im Speicher: Datenpunkte, Räume, Profile, Karten, Systemsprache. Karten und Profile
+ * kommen aus den Instanzeinstellungen; ändern sie sich, startet ioBroker die Instanz neu. Alle Datenpunkte, nicht nur die
+ * aus Karten: Eine Ansichtsabfrage durchläuft in der Objektdatenbank ohnehin alle Objekte. So wird einmal geladen und mit
+ * objectChange nachgeführt.
  */
 export class Katalog implements Objektquelle {
     public sprache = SPRACHE;
     public readonly eigeneApps: string;
     private readonly datenpunkte = new Map<string, Merkmale>();
-    private sortiert?: string[];
-    private readonly raeume = new Map<string, Aufzaehlung>();
-    private readonly funktionen = new Map<string, Aufzaehlung>();
-    private readonly profile = new Map<string, Profil>();
-    private readonly profilPraefix: string;
-    private readonly geraeteNachId = new Map<string, Geraet>();
-    private geraeteSortiert?: [string, Geraet][];
-    private readonly geraetPraefix: string;
+    private readonly raeumeNachId = new Map<string, Aufzaehlung>();
+    private raeumeSortiert?: Aufzaehlung[];
+    private profile = new Map<string, Profil>();
+    private kartenSortiert: [string, Karte][] = [];
     private puffer?: [string, Objektaenderung][];
     private laden: Promise<void> = Promise.resolve();
     private hoerer: () => void = () => undefined;
@@ -53,8 +37,6 @@ export class Katalog implements Objektquelle {
         private readonly log: Protokoll,
         private readonly quelle: Katalogquelle,
     ) {
-        this.profilPraefix = `${namespace}.profile.`;
-        this.geraetPraefix = `${namespace}.geraete.`;
         this.eigeneApps = `${namespace}.apps`;
     }
 
@@ -72,9 +54,7 @@ export class Katalog implements Objektquelle {
             const listen = await Promise.all([
                 this.quelle.objekte('config', 'system.config'),
                 this.quelle.objekte('state', ''),
-                this.quelle.objekte('enum', 'enum.'),
-                this.quelle.objekte('config', this.profilPraefix),
-                this.quelle.objekte('config', this.geraetPraefix),
+                this.quelle.objekte('enum', 'enum.rooms.'),
             ]);
             for (const objekt of listen.flat()) {
                 this.uebernimmSicher(objekt._id, objekt);
@@ -85,6 +65,13 @@ export class Katalog implements Objektquelle {
         } finally {
             this.puffer = undefined;
         }
+    }
+
+    // Einmal beim Start; die Tests ändern damit Karten und Profile wie ein Neustart mit neuen Einstellungen.
+    public konfiguriere(konfiguration: Konfiguration): void {
+        this.profile = new Map(konfiguration.profile);
+        this.kartenSortiert = [...konfiguration.karten].sort(([a], [b]) => a.localeCompare(b));
+        this.hoerer();
     }
 
     public beiAenderung(hoerer: () => void): void {
@@ -114,32 +101,17 @@ export class Katalog implements Objektquelle {
         return [...this.profile].sort(([, a], [, b]) => a.name.localeCompare(b.name));
     }
 
-    public geraet(geraetId: string): Geraet | undefined {
-        return this.geraeteNachId.get(geraetId);
+    public karten(): [string, Karte][] {
+        return this.kartenSortiert;
     }
 
-    public geraete(): [string, Geraet][] {
-        this.geraeteSortiert ??= [...this.geraeteNachId].sort(([a], [b]) => a.localeCompare(b));
-        return this.geraeteSortiert;
+    public raeume(): Aufzaehlung[] {
+        this.raeumeSortiert ??= [...this.raeumeNachId.values()].sort((a, b) => a.id.localeCompare(b.id));
+        return this.raeumeSortiert;
     }
 
-    public aufzaehlungen(art: 'rooms' | 'functions'): Aufzaehlung[] {
-        return [...(art === 'rooms' ? this.raeume : this.funktionen).values()].sort((a, b) => a.id.localeCompare(b.id));
-    }
-
-    public zustaende(praefix: string): Map<string, Merkmale> {
-        this.sortiert ??= [...this.datenpunkte.keys()].sort();
-        const ergebnis = new Map<string, Merkmale>();
-        for (let i = ersterAb(this.sortiert, praefix); i < this.sortiert.length; i++) {
-            const id = this.sortiert[i];
-            if (!id.startsWith(praefix)) {
-                break;
-            }
-            if (liegtUnter(id, praefix)) {
-                ergebnis.set(id, this.datenpunkte.get(id)!);
-            }
-        }
-        return ergebnis;
+    public datenpunkt(id: string): Merkmale | undefined {
+        return this.datenpunkte.get(id);
     }
 
     // Objekte schreiben auch andere Adapter und Skripte: Ein kaputtes darf weder das Laden noch objectChange abbrechen.
@@ -176,78 +148,20 @@ export class Katalog implements Objektquelle {
         if (appIdAus(this.namespace, id)) {
             return true;
         }
-        const art = id.startsWith('enum.rooms.')
-            ? this.raeume
-            : id.startsWith('enum.functions.')
-              ? this.funktionen
-              : undefined;
-        if (art) {
+        if (id.startsWith('enum.rooms.')) {
+            this.raeumeSortiert = undefined;
             if (objekt?.type !== 'enum') {
-                return art.delete(id);
+                return this.raeumeNachId.delete(id);
             }
             const members: unknown = objekt.common?.members;
             const mitglieder = Array.isArray(members) ? members.filter(m => typeof m === 'string') : [];
-            art.set(id, { id, name: objekt.common?.name, mitglieder });
+            this.raeumeNachId.set(id, { id, name: objekt.common?.name, mitglieder });
             return true;
         }
-        if (id.startsWith(this.profilPraefix)) {
-            return this.uebernimmProfil(id.slice(this.profilPraefix.length), objekt);
-        }
-        if (id.startsWith(this.geraetPraefix)) {
-            this.geraeteSortiert = undefined;
-            return this.uebernimmGeraet(id.slice(this.geraetPraefix.length), objekt);
-        }
         if (objekt?.type === 'state') {
-            if (!this.datenpunkte.has(id)) {
-                this.sortiert = undefined;
-            }
             this.datenpunkte.set(id, merkmale(id, objekt.common, this.sprache));
             return true;
         }
-        if (this.datenpunkte.delete(id)) {
-            this.sortiert = undefined;
-            return true;
-        }
-        return false;
+        return this.datenpunkte.delete(id);
     }
-
-    private uebernimmProfil(profilId: string, objekt: Objektaenderung): boolean {
-        if (objekt?.type !== 'config') {
-            return this.profile.delete(profilId);
-        }
-        const profil = istKennung(profilId) ? alsProfil(objekt.native) : [KENNUNG];
-        if (Array.isArray(profil)) {
-            this.log.warn(`Profil ${profilId} ist unbrauchbar und gibt keine Rechte: ${profil.join('; ')}`);
-            return this.profile.delete(profilId);
-        }
-        this.profile.set(profilId, profil);
-        return true;
-    }
-
-    private uebernimmGeraet(geraetId: string, objekt: Objektaenderung): boolean {
-        if (objekt?.type !== 'config') {
-            return this.geraeteNachId.delete(geraetId);
-        }
-        const geraet = istKennung(geraetId) ? alsGeraet(objekt.native) : [KENNUNG];
-        if (Array.isArray(geraet)) {
-            this.log.warn(`Gerät ${geraetId} ist unbrauchbar und fehlt auf den Handys: ${geraet.join('; ')}`);
-            return this.geraeteNachId.delete(geraetId);
-        }
-        this.geraeteNachId.set(geraetId, geraet);
-        return true;
-    }
-}
-
-function ersterAb(sortiert: string[], praefix: string): number {
-    let von = 0;
-    let bis = sortiert.length;
-    while (von < bis) {
-        const mitte = (von + bis) >>> 1;
-        if (sortiert[mitte] < praefix) {
-            von = mitte + 1;
-        } else {
-            bis = mitte;
-        }
-    }
-    return von;
 }

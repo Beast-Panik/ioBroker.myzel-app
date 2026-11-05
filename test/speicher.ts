@@ -1,16 +1,10 @@
-// ioBroker im Speicher für Tests: Apps, Profile, Aufzählungen, Datenpunkte und Zustände.
+// ioBroker im Speicher für Tests: Apps, Profile, Karten, Räume, Datenpunkte und Zustände.
 import type { Protokoll } from '../src/basis/grenzen';
 import { Katalog, type Katalogquelle } from '../src/app/katalog';
-import type {
-    AppDaten,
-    Appablage,
-    Appwerte,
-    Datenpunktname,
-    Geraeteablage,
-    Hinweisstand,
-    Profilablage,
-} from '../src/app/objekte';
-import type { Geraet, Profil } from '../src/app/rechte';
+import type { Zeile } from '../src/app/konfiguration';
+import type { AppDaten, Appablage, Appwerte, Datenpunktname, Hinweisstand } from '../src/app/objekte';
+import type { Karte, Profil } from '../src/app/rechte';
+import type { Umstellungsablage } from '../src/app/umstellung';
 import type { Wert, Zustandsquelle } from '../src/app/werte';
 
 export const NAMESPACE = 'myzel-app.0';
@@ -21,7 +15,7 @@ const still: Protokoll = {
     error: () => undefined,
 };
 
-export class Speicherablage implements Appablage, Profilablage, Geraeteablage {
+export class Speicherablage implements Appablage, Umstellungsablage {
     public readonly apps = new Map<string, AppDaten>();
     public readonly werte_ = new Map<string, Appwerte>();
     public readonly zustaende_ = new Map<string, ioBroker.State>();
@@ -30,6 +24,8 @@ export class Speicherablage implements Appablage, Profilablage, Geraeteablage {
     public readonly geschrieben: string[] = [];
     // Für Tests, die ein Scheitern der Datenbank brauchen
     public scheitern = false;
+    // Was die Umstellung in die Instanzeinstellungen geschrieben hat
+    public readonly einstellungen: { karten: Zeile[]; profile: Zeile[] } = { karten: [], profile: [] };
 
     // Mit quelle wie in ioBroker: Änderungen an Apps und Profilen kommen als objectChange beim Katalog an.
     public constructor(private readonly quelle?: Speicherquelle) {}
@@ -60,20 +56,13 @@ export class Speicherablage implements Appablage, Profilablage, Geraeteablage {
         this.quelle?.app(appId, undefined);
         return Promise.resolve();
     }
-    public legeProfil(profilId: string, profil: Profil): Promise<void> {
-        this.quelle?.profil(profilId, profil);
+    public ergaenzeEinstellungen(karten: Zeile[], profile: Zeile[]): Promise<void> {
+        this.einstellungen.karten.push(...karten);
+        this.einstellungen.profile.push(...profile);
         return Promise.resolve();
     }
-    public loescheProfil(profilId: string): Promise<void> {
-        this.quelle?.profil(profilId, null);
-        return Promise.resolve();
-    }
-    public legeGeraet(geraetId: string, geraet: Geraet): Promise<void> {
-        this.quelle?.geraet(geraetId, geraet);
-        return Promise.resolve();
-    }
-    public loescheGeraet(geraetId: string): Promise<void> {
-        this.quelle?.geraet(geraetId, null);
+    public loescheObjekt(id: string): Promise<void> {
+        this.quelle?.objekt_(`${NAMESPACE}.${id}`, null);
         return Promise.resolve();
     }
     public schreibe(appId: string, werte: Appwerte, ts?: number): Promise<void> {
@@ -119,6 +108,9 @@ export class Speicherquelle implements Zustandsquelle, Katalogquelle {
     public readonly zustaende_ = new Map<string, ioBroker.State>();
     public readonly abonniert = new Set<string>();
     public readonly aufrufe: string[] = [];
+    // Karten und Profile wie in den Instanzeinstellungen
+    public readonly karten = new Map<string, Karte>();
+    public readonly profile = new Map<string, Profil>();
     // Wie stateChange in ioBroker, nur für abonnierte IDs
     public beiAenderung: (id: string, state: ioBroker.State | null) => void = () => undefined;
 
@@ -153,22 +145,34 @@ export class Speicherquelle implements Zustandsquelle, Katalogquelle {
         return this.objekt_(`enum.rooms.${id}`, { type: 'enum', common: { name, members: mitglieder } });
     }
 
-    public funktion(id: string, name: ioBroker.StringOrTranslated, mitglieder: string[]): this {
-        return this.objekt_(`enum.functions.${id}`, { type: 'enum', common: { name, members: mitglieder } });
-    }
-
+    // Wie neue Instanzeinstellungen; in ioBroker käme das mit einem Neustart.
     public profil(profilId: string, profil: Profil | null): this {
-        return this.objekt_(
-            `${NAMESPACE}.profile.${profilId}`,
-            profil && { type: 'config', common: {}, native: profil },
-        );
+        if (profil) {
+            this.profile.set(profilId, profil);
+        } else {
+            this.profile.delete(profilId);
+        }
+        this.katalog.konfiguriere({ karten: this.karten, profile: this.profile });
+        return this;
     }
 
-    public geraet(geraetId: string, geraet: Geraet | null): this {
-        return this.objekt_(
-            `${NAMESPACE}.geraete.${geraetId}`,
-            geraet && { type: 'config', common: {}, native: geraet },
-        );
+    public karte(kartenId: string, karte: Karte | null): this {
+        if (karte) {
+            this.karten.set(kartenId, karte);
+        } else {
+            this.karten.delete(kartenId);
+        }
+        this.katalog.konfiguriere({ karten: this.karten, profile: this.profile });
+        return this;
+    }
+
+    // Objekte, wie sie ein früherer Stand des Adapters hinterließ (Umstellung)
+    public alt(id: string, native: Record<string, unknown>): this {
+        return this.objekt_(`${NAMESPACE}.${id}`, { type: 'config', common: {}, native });
+    }
+
+    public get(id: string): ioBroker.Object | undefined {
+        return this.alle.get(id);
     }
 
     // Nach einer Änderung in der Speicherablage

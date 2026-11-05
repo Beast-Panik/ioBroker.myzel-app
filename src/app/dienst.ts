@@ -238,7 +238,7 @@ export class Dienst implements Anmeldeziel {
             v: version,
             adapter: this.o.adapterId,
             adressen,
-            ...rechte.inhaltFuer(version),
+            ...rechte.inhalt,
             handydaten: daten.handydaten,
         });
         this.o.log.info(`App ${appId} verbunden über ${v.herkunft.weg} von ${v.herkunft.adresse}`);
@@ -267,7 +267,7 @@ export class Dienst implements Anmeldeziel {
             if (this.beendet || this.sitzungen.get(appId) !== angemeldet) {
                 continue;
             }
-            const { sitzung, werte, handy, version } = angemeldet;
+            const { sitzung, werte, handy } = angemeldet;
             if (daten?.zugangHash !== angemeldet.zugangHash) {
                 this.o.log.info(`App ${appId} entfernt oder Zugang geändert, Verbindung beendet`);
                 sitzung.verbindung.schliesse(SCHLIESSCODE.entfernt, 'entfernt');
@@ -275,8 +275,7 @@ export class Dienst implements Anmeldeziel {
             }
             const rechte = jeProfil.get(daten.profil) ?? rechteFuer(daten.profil, this.o.katalog);
             jeProfil.set(daten.profil, rechte);
-            // Je Version: Ändert sich nur ein Gerät, merkt eine App mit Version 1 nichts davon.
-            const rechteNeu = !isDeepStrictEqual(rechte.inhaltFuer(version), werte.rechte.inhaltFuer(version));
+            const rechteNeu = !isDeepStrictEqual(rechte.inhalt, werte.rechte.inhalt);
             if (!rechteNeu && isDeepStrictEqual(daten.handydaten, handy.handydaten)) {
                 continue;
             }
@@ -286,8 +285,8 @@ export class Dienst implements Anmeldeziel {
                     .catch((fehler: Error) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
             }
             handy.handydaten = daten.handydaten;
-            sitzung.verbindung.sende({ t: 'rechte', ...rechte.inhaltFuer(version), handydaten: daten.handydaten });
-            this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.datenpunkte.length} Datenpunkte`);
+            sitzung.verbindung.sende({ t: 'rechte', ...rechte.inhalt, handydaten: daten.handydaten });
+            this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
         }
     }
 

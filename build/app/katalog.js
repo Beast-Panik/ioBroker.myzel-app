@@ -24,27 +24,20 @@ module.exports = __toCommonJS(katalog_exports);
 var import_objekte = require("./objekte");
 var import_rechte = require("./rechte");
 const SPRACHE = "en";
-const KENNUNG = "ID erlaubt nur a bis z, 0 bis 9 und _";
 class Katalog {
   constructor(namespace, log, quelle) {
     this.namespace = namespace;
     this.log = log;
     this.quelle = quelle;
-    this.profilPraefix = `${namespace}.profile.`;
-    this.geraetPraefix = `${namespace}.geraete.`;
     this.eigeneApps = `${namespace}.apps`;
   }
   sprache = SPRACHE;
   eigeneApps;
   datenpunkte = /* @__PURE__ */ new Map();
-  sortiert;
-  raeume = /* @__PURE__ */ new Map();
-  funktionen = /* @__PURE__ */ new Map();
+  raeumeNachId = /* @__PURE__ */ new Map();
+  raeumeSortiert;
   profile = /* @__PURE__ */ new Map();
-  profilPraefix;
-  geraeteNachId = /* @__PURE__ */ new Map();
-  geraeteSortiert;
-  geraetPraefix;
+  kartenSortiert = [];
   puffer;
   laden = Promise.resolve();
   hoerer = () => void 0;
@@ -60,9 +53,7 @@ class Katalog {
       const listen = await Promise.all([
         this.quelle.objekte("config", "system.config"),
         this.quelle.objekte("state", ""),
-        this.quelle.objekte("enum", "enum."),
-        this.quelle.objekte("config", this.profilPraefix),
-        this.quelle.objekte("config", this.geraetPraefix)
+        this.quelle.objekte("enum", "enum.rooms.")
       ]);
       for (const objekt of listen.flat()) {
         this.uebernimmSicher(objekt._id, objekt);
@@ -73,6 +64,12 @@ class Katalog {
     } finally {
       this.puffer = void 0;
     }
+  }
+  // Einmal beim Start; die Tests ändern damit Karten und Profile wie ein Neustart mit neuen Einstellungen.
+  konfiguriere(konfiguration) {
+    this.profile = new Map(konfiguration.profile);
+    this.kartenSortiert = [...konfiguration.karten].sort(([a], [b]) => a.localeCompare(b));
+    this.hoerer();
   }
   beiAenderung(hoerer) {
     this.hoerer = hoerer;
@@ -96,31 +93,16 @@ class Katalog {
   alleProfile() {
     return [...this.profile].sort(([, a], [, b]) => a.name.localeCompare(b.name));
   }
-  geraet(geraetId) {
-    return this.geraeteNachId.get(geraetId);
+  karten() {
+    return this.kartenSortiert;
   }
-  geraete() {
+  raeume() {
     var _a;
-    (_a = this.geraeteSortiert) != null ? _a : this.geraeteSortiert = [...this.geraeteNachId].sort(([a], [b]) => a.localeCompare(b));
-    return this.geraeteSortiert;
+    (_a = this.raeumeSortiert) != null ? _a : this.raeumeSortiert = [...this.raeumeNachId.values()].sort((a, b) => a.id.localeCompare(b.id));
+    return this.raeumeSortiert;
   }
-  aufzaehlungen(art) {
-    return [...(art === "rooms" ? this.raeume : this.funktionen).values()].sort((a, b) => a.id.localeCompare(b.id));
-  }
-  zustaende(praefix) {
-    var _a;
-    (_a = this.sortiert) != null ? _a : this.sortiert = [...this.datenpunkte.keys()].sort();
-    const ergebnis = /* @__PURE__ */ new Map();
-    for (let i = ersterAb(this.sortiert, praefix); i < this.sortiert.length; i++) {
-      const id = this.sortiert[i];
-      if (!id.startsWith(praefix)) {
-        break;
-      }
-      if ((0, import_rechte.liegtUnter)(id, praefix)) {
-        ergebnis.set(id, this.datenpunkte.get(id));
-      }
-    }
-    return ergebnis;
+  datenpunkt(id) {
+    return this.datenpunkte.get(id);
   }
   // Objekte schreiben auch andere Adapter und Skripte: Ein kaputtes darf weder das Laden noch objectChange abbrechen.
   uebernimmSicher(id, objekt) {
@@ -153,73 +135,22 @@ class Katalog {
     if ((0, import_objekte.appIdAus)(this.namespace, id)) {
       return true;
     }
-    const art = id.startsWith("enum.rooms.") ? this.raeume : id.startsWith("enum.functions.") ? this.funktionen : void 0;
-    if (art) {
+    if (id.startsWith("enum.rooms.")) {
+      this.raeumeSortiert = void 0;
       if ((objekt == null ? void 0 : objekt.type) !== "enum") {
-        return art.delete(id);
+        return this.raeumeNachId.delete(id);
       }
       const members = (_b = objekt.common) == null ? void 0 : _b.members;
       const mitglieder = Array.isArray(members) ? members.filter((m) => typeof m === "string") : [];
-      art.set(id, { id, name: (_c = objekt.common) == null ? void 0 : _c.name, mitglieder });
+      this.raeumeNachId.set(id, { id, name: (_c = objekt.common) == null ? void 0 : _c.name, mitglieder });
       return true;
     }
-    if (id.startsWith(this.profilPraefix)) {
-      return this.uebernimmProfil(id.slice(this.profilPraefix.length), objekt);
-    }
-    if (id.startsWith(this.geraetPraefix)) {
-      this.geraeteSortiert = void 0;
-      return this.uebernimmGeraet(id.slice(this.geraetPraefix.length), objekt);
-    }
     if ((objekt == null ? void 0 : objekt.type) === "state") {
-      if (!this.datenpunkte.has(id)) {
-        this.sortiert = void 0;
-      }
       this.datenpunkte.set(id, (0, import_rechte.merkmale)(id, objekt.common, this.sprache));
       return true;
     }
-    if (this.datenpunkte.delete(id)) {
-      this.sortiert = void 0;
-      return true;
-    }
-    return false;
+    return this.datenpunkte.delete(id);
   }
-  uebernimmProfil(profilId, objekt) {
-    if ((objekt == null ? void 0 : objekt.type) !== "config") {
-      return this.profile.delete(profilId);
-    }
-    const profil = (0, import_rechte.istKennung)(profilId) ? (0, import_rechte.alsProfil)(objekt.native) : [KENNUNG];
-    if (Array.isArray(profil)) {
-      this.log.warn(`Profil ${profilId} ist unbrauchbar und gibt keine Rechte: ${profil.join("; ")}`);
-      return this.profile.delete(profilId);
-    }
-    this.profile.set(profilId, profil);
-    return true;
-  }
-  uebernimmGeraet(geraetId, objekt) {
-    if ((objekt == null ? void 0 : objekt.type) !== "config") {
-      return this.geraeteNachId.delete(geraetId);
-    }
-    const geraet = (0, import_rechte.istKennung)(geraetId) ? (0, import_rechte.alsGeraet)(objekt.native) : [KENNUNG];
-    if (Array.isArray(geraet)) {
-      this.log.warn(`Ger\xE4t ${geraetId} ist unbrauchbar und fehlt auf den Handys: ${geraet.join("; ")}`);
-      return this.geraeteNachId.delete(geraetId);
-    }
-    this.geraeteNachId.set(geraetId, geraet);
-    return true;
-  }
-}
-function ersterAb(sortiert, praefix) {
-  let von = 0;
-  let bis = sortiert.length;
-  while (von < bis) {
-    const mitte = von + bis >>> 1;
-    if (sortiert[mitte] < praefix) {
-      von = mitte + 1;
-    } else {
-      bis = mitte;
-    }
-  }
-  return von;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

@@ -25,7 +25,10 @@ var utils = __toESM(require("@iobroker/adapter-core"));
 var import_gemeinsam_schema = __toESM(require("../protokoll/v1/gemeinsam.schema.json"));
 var import_geraete = require("./admin/geraete");
 var import_katalog = require("./app/katalog");
+var import_konfiguration = require("./app/konfiguration");
 var import_objekte = require("./app/objekte");
+var import_rechte = require("./app/rechte");
+var import_umstellung = require("./app/umstellung");
 var import_server = require("./app/server");
 var import_kodierung = require("./basis/kodierung");
 var import_schema = require("./basis/schema");
@@ -33,6 +36,7 @@ var import_zertifikat = require("./basis/zertifikat");
 var import_einstellungen = require("./einstellungen");
 var import_heimnetz = require("./zugang/heimnetz");
 const IDENTITAET = "identitaet";
+const liste = (w) => Array.isArray(w) ? w : [];
 const pruefeAdapterId = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/adapterId` }, [import_gemeinsam_schema.default]);
 class MyzelApp extends utils.Adapter {
   server;
@@ -53,6 +57,7 @@ class MyzelApp extends utils.Adapter {
       var _a;
       return (_a = this.katalog) == null ? void 0 : _a.geaendert(id, objekt);
     });
+    this.on("message", (obj) => void this.beantworte(obj));
     this.on("unload", this.onUnload.bind(this));
   }
   async onReady() {
@@ -79,11 +84,27 @@ class MyzelApp extends utils.Adapter {
     const quelle = new import_objekte.IoBrokerQuelle(this);
     const ablage = new import_objekte.IoBrokerAblage(this);
     const adressen = () => this.config.adressen.length > 0 ? this.config.adressen : (0, import_heimnetz.automatischeAdressen)(this.config.port);
+    const neu = await (0, import_umstellung.stelleUm)(this.namespace, quelle, this.config, ablage, this.log).catch((fehler2) => {
+      this.log.error(`Umstellung auf Karten in den Einstellungen: ${fehler2.message}`);
+      return { karten: [], profile: [] };
+    });
     const katalog = new import_katalog.Katalog(this.namespace, this.log, quelle);
+    katalog.konfiguriere(
+      (0, import_konfiguration.liesKonfiguration)(
+        {
+          karten: [...liste(this.config.karten), ...neu.karten],
+          profile: [...liste(this.config.profile), ...neu.profile]
+        },
+        this.log
+      )
+    );
     this.katalog = katalog;
     await this.subscribeForeignObjectsAsync("*");
     await katalog.lade();
     this.log.info(`${katalog.anzahl} Datenpunkte im Katalog`);
+    for (const mangel of (0, import_rechte.kartenmaengel)(katalog)) {
+      this.log.warn(mangel);
+    }
     const server = await (0, import_server.starteServer)({
       adapterId: identitaet.adapterId,
       namespace: this.namespace,
@@ -120,6 +141,26 @@ class MyzelApp extends utils.Adapter {
     if (offen.length > 0) {
       this.log.warn((0, import_geraete.adminOffen)(offen).de);
     }
+  }
+  // Auswahllisten der Reiter Karten und Profile in den Instanzeinstellungen (admin/jsonConfig.json). Räume direkt aus
+  // ioBroker, damit die Listen auch gehen, wenn der Server nicht läuft.
+  async beantworte(obj) {
+    var _a;
+    if (!(obj == null ? void 0 : obj.callback) || obj.command !== "raeume" && obj.command !== "karten") {
+      return;
+    }
+    let antwort = [];
+    try {
+      const objekte = await this.getForeignObjectsAsync("enum.rooms.*", "enum");
+      const raeume = Object.values(objekte).map((o) => {
+        var _a2;
+        return { id: o._id, name: (_a2 = o.common) == null ? void 0 : _a2.name, mitglieder: [] };
+      });
+      antwort = obj.command === "raeume" ? (0, import_konfiguration.raumoptionen)(raeume) : (0, import_konfiguration.kartenoptionen)((_a = obj.message) == null ? void 0 : _a.karten, raeume);
+    } catch (fehler) {
+      this.log.warn(`Auswahl ${obj.command} f\xFCr die Einstellungen: ${fehler.message}`);
+    }
+    this.sendTo(obj.from, obj.command, antwort, obj.callback);
   }
   async adminOhneAnmeldung() {
     const praefix = "system.adapter.admin.";

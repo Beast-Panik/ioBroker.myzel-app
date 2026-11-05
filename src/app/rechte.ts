@@ -7,28 +7,73 @@ export type Recht = 'lesen' | 'schreiben';
 export interface Profil {
     name: string;
     raeume: { enum: string; recht: Recht }[];
-    freigaben: { id: string; recht: Recht }[];
-    sperren: string[];
+    karten: { id: string; recht: Recht }[];
+    gesperrt: string[];
 }
 
-export type Teil = 'schalten' | 'helligkeit' | 'farbe' | 'farbtemperatur';
+export type Kartentyp = 'lampe' | 'schalter' | 'messwert' | 'thermostat';
+type Datentyp = 'boolean' | 'number' | 'string';
 
-// KONZEPT-GERAETE.md, Abschnitt 2: Typ des Datenpunkts je Teil einer Lampe
-export const TEILTYP: Readonly<Record<Teil, 'boolean' | 'number' | 'string'>> = {
-    schalten: 'boolean',
-    helligkeit: 'number',
-    farbe: 'string',
-    farbtemperatur: 'number',
+export interface Teilart {
+    typen: readonly Datentyp[];
+    bedienbar: boolean;
+    // Ein Regler: Bereich, falls der Datenpunkt keinen nennt, oder 'pflicht', wenn er einen nennen muss. Die Lichtfarbe
+    // braucht ihren eigenen: Ohne ihn weiß niemand, wo warm und wo kalt liegt.
+    bereich?: { min: number; max: number } | 'pflicht';
+    // Schritt, falls der Datenpunkt keinen nennt
+    schritt?: number;
+}
+
+export interface Kartenart {
+    teile: Readonly<Record<string, Teilart>>;
+    pflicht: readonly string[];
+    // Mehrere Werte auf einer Karte brauchen je eine Bezeichnung
+    bezeichnungen?: boolean;
+}
+
+const AN_AUS: Teilart = { typen: ['boolean'], bedienbar: true };
+const ANZEIGE: Teilart = { typen: ['number', 'string', 'boolean'], bedienbar: false };
+
+// KONZEPT-KARTEN.md, Abschnitt 2. Das Schema beschreibt dasselbe für die App; ein Test hält beide gleich.
+export const KARTENARTEN: Readonly<Record<Kartentyp, Kartenart>> = {
+    lampe: {
+        teile: {
+            schalten: AN_AUS,
+            helligkeit: { typen: ['number'], bedienbar: true, bereich: { min: 0, max: 100 } },
+            farbe: { typen: ['string'], bedienbar: true },
+            farbtemperatur: { typen: ['number'], bedienbar: true, bereich: 'pflicht' },
+        },
+        pflicht: [],
+    },
+    schalter: { teile: { schalten: AN_AUS }, pflicht: ['schalten'] },
+    messwert: {
+        teile: { wert1: ANZEIGE, wert2: ANZEIGE, wert3: ANZEIGE, wert4: ANZEIGE },
+        pflicht: [],
+        bezeichnungen: true,
+    },
+    thermostat: {
+        teile: {
+            soll: { typen: ['number'], bedienbar: true, bereich: { min: 5, max: 30 }, schritt: 0.5 },
+            ist: { typen: ['number'], bedienbar: false },
+        },
+        pflicht: ['soll'],
+    },
 };
-export const TEILE = Object.keys(TEILTYP) as Teil[];
+export const KARTENTYPEN = Object.keys(KARTENARTEN) as Kartentyp[];
 
-export interface Geraet {
+export interface Karte {
     name: string;
-    typ: 'lampe';
-    teile: Partial<Record<Teil, string>>;
+    typ: Kartentyp;
+    // ID aus enum.rooms oder leer
+    raum: string;
+    // Teil auf Datenpunkt-ID
+    teile: Record<string, string>;
+    bezeichnungen?: Record<string, string>;
 }
 
-export const GERAETE_HOECHSTENS = adapterAnApp.$defs.rechteInhalt.properties.geraete.maxItems;
+export const KARTEN_HOECHSTENS = adapterAnApp.$defs.rechteInhalt.properties.karten.maxItems;
+export const NAME_LAENGE = 200;
+export const BEZEICHNUNG_LAENGE = 60;
 
 export interface Aufzaehlung {
     id: string;
@@ -36,7 +81,7 @@ export interface Aufzaehlung {
     mitglieder: string[];
 }
 
-const MERKMALE = ['name', 'type', 'role', 'unit', 'min', 'max', 'step', 'states', 'write'] as const;
+const MERKMALE = ['name', 'type', 'unit', 'min', 'max', 'step', 'states', 'write'] as const;
 
 // Nur was die Auswertung braucht: Der Katalog hält das für jeden Datenpunkt im Speicher.
 export type Merkmale = Partial<Pick<ioBroker.StateCommon, (typeof MERKMALE)[number]>> & { ziele?: string[] };
@@ -64,114 +109,161 @@ export interface Objektquelle {
     readonly eigeneApps: string;
     profil(profilId: string): Profil | undefined;
     // Nach ID sortiert
-    geraete(): [string, Geraet][];
-    aufzaehlungen(art: 'rooms' | 'functions'): Aufzaehlung[];
-    // Datenpunkte mit genau dieser ID oder darunter
-    zustaende(praefix: string): Map<string, Merkmale>;
+    karten(): [string, Karte][];
+    // Nach ID sortiert
+    raeume(): Aufzaehlung[];
+    datenpunkt(id: string): Merkmale | undefined;
 }
 
-export interface Datenpunkt {
+export interface Kartenteil {
     id: string;
-    name: string;
-    typ: string;
-    rolle?: string;
+    typ: Datentyp;
     einheit?: string;
     min?: number;
     max?: number;
     schritt?: number;
     auswahl?: Record<string, string>;
     recht: Recht;
+    name?: string;
 }
 
-export interface Gruppe {
+export interface Karteneintrag {
     id: string;
     name: string;
-    mitglieder: string[];
+    typ: Kartentyp;
+    raum?: string;
+    teile: Record<string, Kartenteil>;
 }
 
-export interface Geraeteintrag extends Geraet {
+export interface Raum {
     id: string;
+    name: string;
 }
 
 export interface Rechteinhalt {
     profil: string;
-    datenpunkte: Datenpunkt[];
-    raeume: Gruppe[];
-    funktionen: Gruppe[];
-    geraete: Geraeteintrag[];
+    raeume: Raum[];
+    karten: Karteneintrag[];
 }
 
-const TYPEN = new Set(['number', 'string', 'boolean', 'json', 'mixed', 'array', 'object', 'file']);
 const RANG: Record<Recht, number> = { lesen: 1, schreiben: 2 };
 const FEST_GESPERRT = ['system'];
 
+const hoeher = (a: Recht | undefined, b: Recht): Recht => (a && RANG[a] >= RANG[b] ? a : b);
+
 const pruefeObjektId = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/objektId` }, [gemeinsam]);
-const pruefeProfil = erstellePruefer({
-    type: 'object',
-    required: ['name', 'raeume', 'freigaben', 'sperren'],
-    properties: {
-        name: { type: 'string', minLength: 1, maxLength: 60 },
-        raeume: {
-            type: 'array',
-            items: {
-                type: 'object',
-                required: ['enum', 'recht'],
-                properties: {
-                    enum: { type: 'string', pattern: '^enum\\.rooms\\.' },
-                    recht: { enum: ['lesen', 'schreiben'] },
+const kennung = { $ref: `${gemeinsam.$id}#/$defs/kennung` };
+const rechtwahl = { enum: ['lesen', 'schreiben'] };
+
+const pruefeProfil = erstellePruefer(
+    {
+        type: 'object',
+        required: ['name', 'raeume', 'karten', 'gesperrt'],
+        properties: {
+            name: { type: 'string', minLength: 1, maxLength: 60 },
+            raeume: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    required: ['enum', 'recht'],
+                    properties: { enum: { type: 'string', pattern: '^enum\\.rooms\\.' }, recht: rechtwahl },
                 },
             },
-        },
-        freigaben: {
-            type: 'array',
-            items: {
-                type: 'object',
-                required: ['id', 'recht'],
-                properties: { id: { type: 'string', minLength: 1 }, recht: { enum: ['lesen', 'schreiben'] } },
+            karten: {
+                type: 'array',
+                items: { type: 'object', required: ['id', 'recht'], properties: { id: kennung, recht: rechtwahl } },
             },
+            gesperrt: { type: 'array', items: kennung },
         },
-        sperren: { type: 'array', items: { type: 'string', minLength: 1 } },
     },
-});
+    [gemeinsam],
+);
 
 export function alsProfil(native: unknown): Profil | string[] {
     const fehler = pruefeProfil(native);
     return fehler.length > 0 ? fehler : (native as Profil);
 }
 
-const geraetFeld = (feld: string): object => ({ $ref: `${adapterAnApp.$id}#/$defs/geraet/properties/${feld}` });
-const pruefeGeraet = erstellePruefer(
+// Je Typ nur seine Teile; welcher Datenpunkt passt, hängt vom Datenpunkt ab und wird bei jeder Berechnung geprüft.
+const pruefeKarte = erstellePruefer(
     {
         type: 'object',
-        required: ['name', 'typ', 'teile'],
+        required: ['name', 'typ', 'raum', 'teile'],
         properties: {
-            name: { type: 'string', minLength: 1, maxLength: 200 },
-            typ: geraetFeld('typ'),
-            teile: geraetFeld('teile'),
+            name: { type: 'string', minLength: 1, maxLength: NAME_LAENGE },
+            typ: { enum: KARTENTYPEN },
+            raum: {
+                anyOf: [
+                    { const: '' },
+                    {
+                        allOf: [
+                            { $ref: `${gemeinsam.$id}#/$defs/objektId` },
+                            { type: 'string', pattern: '^enum\\.rooms\\.' },
+                        ],
+                    },
+                ],
+            },
         },
+        oneOf: KARTENTYPEN.map(typ => {
+            const art = KARTENARTEN[typ];
+            const je = (schema: object): Record<string, object> =>
+                Object.fromEntries(Object.keys(art.teile).map(teil => [teil, schema]));
+            return {
+                type: 'object',
+                properties: {
+                    typ: { const: typ },
+                    teile: {
+                        type: 'object',
+                        additionalProperties: false,
+                        minProperties: 1,
+                        required: art.pflicht,
+                        properties: je({ $ref: `${gemeinsam.$id}#/$defs/objektId` }),
+                    },
+                    bezeichnungen: art.bezeichnungen
+                        ? {
+                              type: 'object',
+                              additionalProperties: false,
+                              properties: je({ type: 'string', maxLength: BEZEICHNUNG_LAENGE }),
+                          }
+                        : false,
+                },
+            };
+        }),
     },
-    [gemeinsam, adapterAnApp],
+    [gemeinsam],
 );
 
-// Nur der Aufbau; ob die Datenpunkte passen, hängt von ihnen ab und wird bei jeder Berechnung der Rechte geprüft.
-export function alsGeraet(native: unknown): Geraet | string[] {
-    const fehler = pruefeGeraet(native);
-    return fehler.length > 0 ? fehler : (native as Geraet);
+export function alsKarte(native: unknown): Karte | string[] {
+    const fehler = pruefeKarte(native);
+    return fehler.length > 0 ? fehler : (native as Karte);
 }
 
-const pruefeKennung = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/kennung` }, [gemeinsam]);
+const pruefeKennung = erstellePruefer(kennung, [gemeinsam]);
 export const istKennung = (id: unknown): id is string => pruefeKennung(id).length === 0;
 
 const zahl = (w: unknown): number | undefined => (typeof w === 'number' && Number.isFinite(w) ? w : undefined);
 
-// Die Lichtfarbe braucht ihren Bereich: Ohne ihn weiß die App nicht, wo warm und wo kalt liegt.
-export function passtZuTeil(teil: Teil, typ: unknown, min: unknown, max: unknown): boolean {
-    if (typ !== TEILTYP[teil]) {
-        return false;
+export interface Bereich {
+    min: number;
+    max: number;
+    schritt?: number;
+}
+
+// Fertig für Regler in App und Admin. Ohne eigenen Schritt ganze Schritte, sobald der Bereich das hergibt: Sonst
+// schickten Regler Werte wie 34,271 % (G3).
+export function bereich(art: Teilart, m: Pick<Merkmale, 'min' | 'max' | 'step'>): Bereich | undefined {
+    if (!art.bereich) {
+        return undefined;
     }
-    const von = zahl(min);
-    const bis = zahl(max);
-    return teil !== 'farbtemperatur' || (von !== undefined && bis !== undefined && von < bis);
+    const vorgabe = art.bereich === 'pflicht' ? undefined : art.bereich;
+    const min = zahl(m.min) ?? vorgabe?.min;
+    const max = zahl(m.max) ?? vorgabe?.max;
+    if (min === undefined || max === undefined || min >= max) {
+        return undefined;
+    }
+    const eigener = zahl(m.step);
+    const schritt = eigener !== undefined && eigener > 0 ? eigener : (art.schritt ?? (max - min >= 10 ? 1 : undefined));
+    return { min, max, ...(schritt !== undefined ? { schritt } : {}) };
 }
 
 export function text(name: ioBroker.StringOrTranslated | undefined, sprache: string, ersatz: string): string {
@@ -205,20 +297,21 @@ function auswahl(states: unknown): Record<string, string> | undefined {
 const kurz = (w: unknown, laenge: number): string | undefined =>
     typeof w === 'string' && w !== '' ? w.slice(0, laenge) : undefined;
 
-// Kürzt auf die Grenzen des Schemas: Die App trennt bei jeder Abweichung.
-export function beschreibe(id: string, common: Merkmale, recht: Recht, sprache: string): Datenpunkt {
-    const felder: Omit<Datenpunkt, 'id' | 'name' | 'typ' | 'recht'> = {
-        rolle: kurz(common.role, 100),
-        einheit: kurz(common.unit, 30),
-        min: zahl(common.min),
-        max: zahl(common.max),
-        schritt: zahl(common.step),
-        auswahl: auswahl(common.states),
+// Kürzt auf die Grenzen des Schemas: Die App trennt bei jeder Abweichung. Nur für Datenpunkte, die zum Teil passen.
+function beschreibe(id: string, m: Merkmale, art: Teilart, recht: Recht, name: string | undefined): Kartenteil {
+    const regler = bereich(art, m);
+    const felder = {
+        einheit: kurz(m.unit, 30),
+        min: regler?.min,
+        max: regler?.max,
+        schritt: regler?.schritt,
+        // Text zu einem Wert braucht nur, was angezeigt wird
+        auswahl: art.bedienbar ? undefined : auswahl(m.states),
+        name: name?.slice(0, NAME_LAENGE),
     };
     return {
         id,
-        name: text(common.name, sprache, id).slice(0, 200),
-        typ: common.type && TYPEN.has(common.type) ? common.type : 'mixed',
+        typ: m.type as Datentyp,
         ...Object.fromEntries(Object.entries(felder).filter(([, w]) => w !== undefined)),
         recht,
     };
@@ -226,32 +319,80 @@ export function beschreibe(id: string, common: Merkmale, recht: Recht, sprache: 
 
 export const liegtUnter = (id: string, praefix: string): boolean => id === praefix || id.startsWith(`${praefix}.`);
 
-const gesperrt = (id: string, m: Merkmale, sperren: string[]): boolean =>
-    [id, ...(m.ziele ?? [])].some(i => sperren.some(s => liegtUnter(i, s)));
+const betrifft = (id: string, m: Merkmale | undefined, praefixe: string[]): boolean =>
+    [id, ...(m?.ziele ?? [])].some(i => praefixe.some(p => liegtUnter(i, p)));
 
-/** Was eine App sehen und schreiben darf, nach Abschnitt 9 des Detailentwurfs. */
+// Warum ein Datenpunkt nicht als Teil auf die Karte kommt; undefined, wenn er passt
+function teilmangel(dp: string, m: Merkmale | undefined, art: Teilart): string | undefined {
+    if (pruefeObjektId(dp).length > 0) {
+        return 'ID ungültig';
+    }
+    if (!m) {
+        return 'Datenpunkt fehlt';
+    }
+    if (betrifft(dp, m, FEST_GESPERRT)) {
+        return 'unter system, nie freigegeben';
+    }
+    if (!art.typen.includes(m.type as Datentyp)) {
+        return `Typ ${String(m.type)} statt ${art.typen.join(' oder ')}`;
+    }
+    if (art.bereich && bereich(art, m) === undefined) {
+        return 'min und max fehlen oder passen nicht';
+    }
+    return undefined;
+}
+
+/**
+ * Für das Log beim Start: Was an den Karten nicht passt. Der Admin prüft beim Speichern nur den Namen, und jedes Speichern
+ * startet die Instanz neu; so steht ein unpassender Datenpunkt gleich danach im Log statt still auf dem Handy zu fehlen.
+ */
+export function kartenmaengel(quelle: Pick<Objektquelle, 'karten' | 'datenpunkt'>): string[] {
+    const maengel: string[] = [];
+    for (const [id, karte] of quelle.karten()) {
+        const art = KARTENARTEN[karte.typ];
+        const teile = Object.entries(karte.teile).map(([teil, dp]) => ({
+            teil,
+            dp,
+            mangel: teilmangel(dp, quelle.datenpunkt(dp), art.teile[teil]),
+        }));
+        const schlecht = teile.filter(t => t.mangel !== undefined);
+        if (schlecht.length === 0) {
+            continue;
+        }
+        const bleiben = teile.filter(t => t.mangel === undefined).map(t => t.teil);
+        const folge =
+            bleiben.length === 0 || art.pflicht.some(p => !bleiben.includes(p))
+                ? 'fehlt auf den Handys'
+                : 'zeigt nicht alle Teile';
+        const liste = schlecht.map(t => `${t.teil} ${t.dp}: ${t.mangel}`).join('; ');
+        maengel.push(`Karte „${karte.name}“ (${id}) ${folge}: ${liste}`);
+    }
+    return maengel;
+}
+
+/** Was eine App sehen und schreiben darf, nach KONZEPT-KARTEN.md, Abschnitt 4. */
 export class Rechtestand {
-    private readonly rechte: Map<string, Recht>;
+    private readonly rechte = new Map<string, Recht>();
 
     public constructor(public readonly inhalt: Rechteinhalt) {
-        this.rechte = new Map(inhalt.datenpunkte.map(d => [d.id, d.recht]));
+        // Steht ein Datenpunkt in mehreren Karten, gilt das höchste Recht.
+        for (const karte of inhalt.karten) {
+            for (const t of Object.values(karte.teile)) {
+                this.rechte.set(t.id, hoeher(this.rechte.get(t.id), t.recht));
+            }
+        }
     }
 
     public recht(id: string): Recht | undefined {
         return this.rechte.get(id);
     }
 
-    // Geräte erst ab Version 2: Eine App mit Version 1 trennt bei einem unbekannten Feld.
-    public inhaltFuer(version: number): Partial<Rechteinhalt> {
-        if (version >= 2) {
-            return this.inhalt;
-        }
-        const { geraete: _, ...ohneGeraete } = this.inhalt;
-        return ohneGeraete;
+    public get anzahlDatenpunkte(): number {
+        return this.rechte.size;
     }
 
     public static leer(): Rechtestand {
-        return new Rechtestand({ profil: '', datenpunkte: [], raeume: [], funktionen: [], geraete: [] });
+        return new Rechtestand({ profil: '', raeume: [], karten: [] });
     }
 }
 
@@ -262,87 +403,64 @@ export function rechteFuer(profilId: string, quelle: Objektquelle): Rechtestand 
 }
 
 export function berechneRechte(profil: Profil, quelle: Objektquelle): Rechtestand {
-    const { sprache } = quelle;
-    const rechte = new Map<string, Recht>();
-    const objekte = new Map<string, Merkmale>();
-    const raeume = quelle.aufzaehlungen('rooms');
-    const funktionen = quelle.aufzaehlungen('functions');
+    const raumrecht = new Map<string, Recht>();
+    profil.raeume.forEach(r => raumrecht.set(r.enum, hoeher(raumrecht.get(r.enum), r.recht)));
+    const einzeln = new Map<string, Recht>();
+    profil.karten.forEach(k => einzeln.set(k.id, hoeher(einzeln.get(k.id), k.recht)));
+    const gesperrt = new Set(profil.gesperrt);
+    const raeume = new Map(quelle.raeume().map(r => [r.id, r]));
 
-    for (const { enum: raumId, recht } of profil.raeume) {
-        for (const mitglied of raeume.find(r => r.id === raumId)?.mitglieder ?? []) {
-            for (const [id, common] of quelle.zustaende(mitglied)) {
-                // Anrufe und Benachrichtigungen der Apps nur über Einzelfreigaben: Ein Raum ist dafür zu grob.
-                if (gesperrt(id, common, [quelle.eigeneApps])) {
-                    continue;
-                }
-                objekte.set(id, common);
-                const bisher = rechte.get(id);
-                if (!bisher || RANG[recht] > RANG[bisher]) {
-                    rechte.set(id, recht);
-                }
-            }
+    const karten: Karteneintrag[] = [];
+    for (const [id, karte] of quelle.karten()) {
+        if (karten.length >= KARTEN_HOECHSTENS) {
+            break;
         }
-    }
-    for (const { id, recht } of profil.freigaben) {
-        const common = quelle.zustaende(id).get(id);
-        if (common) {
-            objekte.set(id, common);
-            rechte.set(id, recht);
-        }
-    }
-
-    const datenpunkte: Datenpunkt[] = [];
-    for (const [id, recht] of rechte) {
-        const common = objekte.get(id)!;
-        if (gesperrt(id, common, [...profil.sperren, ...FEST_GESPERRT]) || pruefeObjektId(id).length > 0) {
+        if (gesperrt.has(id)) {
             continue;
         }
-        datenpunkte.push(beschreibe(id, common, common.write === false ? 'lesen' : recht, sprache));
+        const raum = raeume.has(karte.raum) ? karte.raum : undefined;
+        // Anrufe und Benachrichtigungen der Apps nur über Einzelfreigaben: Ein Raum ist dafür zu grob.
+        const persoenlich = Object.values(karte.teile).some(dp =>
+            betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]),
+        );
+        const recht = einzeln.get(id) ?? (raum && !persoenlich ? raumrecht.get(raum) : undefined);
+        const eintrag = recht && kartenEintrag(id, karte, recht, raum, quelle);
+        if (eintrag) {
+            karten.push(eintrag);
+        }
     }
-    datenpunkte.sort((a, b) => a.id.localeCompare(b.id));
 
-    // Gruppen ordnen nur; auch ein Raum außerhalb des Profils zeigt seine erlaubten Datenpunkte.
-    const gruppiere = (liste: Aufzaehlung[]): Gruppe[] =>
-        liste
-            .map(a => ({
-                id: a.id,
-                name: text(a.name, sprache, a.id).slice(0, 200),
-                mitglieder: datenpunkte.filter(d => a.mitglieder.some(m => liegtUnter(d.id, m))).map(d => d.id),
-            }))
-            .filter(g => g.mitglieder.length > 0 && pruefeObjektId(g.id).length === 0);
-
+    const sichtbar = new Set(karten.map(k => k.raum));
     return new Rechtestand({
         profil: profil.name,
-        datenpunkte,
-        raeume: gruppiere(raeume),
-        funktionen: gruppiere(funktionen),
-        geraete: geraeteAus(datenpunkte, quelle),
+        raeume: [...raeume.values()]
+            .filter(r => sichtbar.has(r.id) && pruefeObjektId(r.id).length === 0)
+            .map(r => ({ id: r.id, name: text(r.name, quelle.sprache, r.id).slice(0, NAME_LAENGE) })),
+        karten,
     });
 }
 
-// Geräte geben keine Rechte, sie fassen nur erlaubte Datenpunkte zusammen. Ein Datenpunkt gehört zu höchstens einem
-// Gerät; hat ein anderer Adapter das in den Objekten verletzt, gewinnt das Gerät mit der kleineren ID, für jedes Profil
-// gleich.
-function geraeteAus(datenpunkte: Datenpunkt[], quelle: Objektquelle): Geraeteintrag[] {
-    const erlaubt = new Map(datenpunkte.map(d => [d.id, d]));
-    const vergeben = new Set<string>();
-    const geraete: Geraeteintrag[] = [];
-    for (const [id, geraet] of quelle.geraete()) {
-        const teile: Geraet['teile'] = {};
-        for (const teil of TEILE) {
-            const dpId = geraet.teile[teil];
-            if (dpId === undefined || vergeben.has(dpId)) {
-                continue;
-            }
-            vergeben.add(dpId);
-            const d = erlaubt.get(dpId);
-            if (d && passtZuTeil(teil, d.typ, d.min, d.max)) {
-                teile[teil] = dpId;
-            }
+function kartenEintrag(
+    id: string,
+    karte: Karte,
+    recht: Recht,
+    raum: string | undefined,
+    quelle: Objektquelle,
+): Karteneintrag | undefined {
+    const art = KARTENARTEN[karte.typ];
+    const teile: Record<string, Kartenteil> = {};
+    for (const [teil, teilart] of Object.entries(art.teile)) {
+        const dp = karte.teile[teil];
+        const m = dp === undefined ? undefined : quelle.datenpunkt(dp);
+        if (dp === undefined || !m || teilmangel(dp, m, teilart) !== undefined) {
+            continue;
         }
-        if (Object.keys(teile).length > 0 && geraete.length < GERAETE_HOECHSTENS) {
-            geraete.push({ id, name: geraet.name, typ: geraet.typ, teile });
-        }
+        const teilrecht = recht === 'schreiben' && teilart.bedienbar && m.write !== false ? 'schreiben' : 'lesen';
+        const name = art.bezeichnungen ? karte.bezeichnungen?.[teil] || text(m.name, quelle.sprache, dp) : undefined;
+        teile[teil] = beschreibe(dp, m, teilart, teilrecht, name);
     }
-    return geraete;
+    if (Object.keys(teile).length === 0 || art.pflicht.some(p => !teile[p])) {
+        return undefined;
+    }
+    return { id, name: karte.name.slice(0, NAME_LAENGE), typ: karte.typ, ...(raum ? { raum } : {}), teile };
 }

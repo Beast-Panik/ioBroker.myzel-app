@@ -16,8 +16,8 @@ type Befehl = Record<string, any>;
 const familie: Profil = {
     name: 'Familie',
     raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'schreiben' }],
-    freigaben: [],
-    sperren: [],
+    karten: [],
+    gesperrt: [],
 };
 
 async function main(): Promise<void> {
@@ -36,15 +36,26 @@ async function main(): Promise<void> {
             false,
         )
         .datenpunkt('zigbee.0.lampe.helligkeit', { type: 'number', min: 0, max: 100, unit: '%' }, 40)
-        .datenpunkt('zigbee.0.sensor.temperatur', { type: 'number', write: false, unit: '°C' }, 21.5)
+        .datenpunkt(
+            'zigbee.0.sensor.temperatur',
+            { type: 'number', write: false, unit: '°C', name: { de: 'Temperatur', en: 'Temperature' } },
+            21.5,
+        )
         .datenpunkt('zigbee.0.tuer.offen', { type: 'boolean' }, false)
-        .raum('wohnzimmer', { de: 'Wohnzimmer', en: 'Living room' }, ['zigbee.0.lampe', 'zigbee.0.sensor'])
-        .funktion('licht', 'Licht', ['zigbee.0.lampe.state'])
-        .geraet('wohnzimmerlampe', {
+        .raum('wohnzimmer', { de: 'Wohnzimmer', en: 'Living room' }, [])
+        .karte('wohnzimmerlampe', {
             name: 'Wohnzimmerlampe',
             typ: 'lampe',
+            raum: 'enum.rooms.wohnzimmer',
             teile: { schalten: 'zigbee.0.lampe.state', helligkeit: 'zigbee.0.lampe.helligkeit' },
         })
+        .karte('klima', {
+            name: 'Klima',
+            typ: 'messwert',
+            raum: 'enum.rooms.wohnzimmer',
+            teile: { wert1: 'zigbee.0.sensor.temperatur' },
+        })
+        .karte('tuer', { name: 'Tür', typ: 'schalter', raum: '', teile: { schalten: 'zigbee.0.tuer.offen' } })
         .profil('familie', familie);
     const ablage = new Speicherablage(quelle);
     const adapterId = neueAdapterId();
@@ -109,6 +120,10 @@ async function main(): Promise<void> {
         zustand: b => ({ zustand: quelle.zustaende_.get(b.id) ?? null }),
         profil: b => {
             quelle.profil(b.id, b.profil);
+            return {};
+        },
+        karte: b => {
+            quelle.karte(b.id, b.karte ?? null);
             return {};
         },
         handydaten: async b => {

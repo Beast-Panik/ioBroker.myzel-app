@@ -14,8 +14,8 @@ const zugang = 'A'.repeat(43);
 const geraet = { android: '15', appVersion: '1.0.0' };
 
 const gueltigAnAdapter: Record<string, unknown>[] = [
-    { t: 'hallo', v: 1, app: 'abcdefgh', zugang, geraet },
-    { t: 'koppeln', v: 1, geheimnis: 'b'.repeat(22), name: 'Tablet Flur', geraet },
+    { t: 'hallo', v: 3, app: 'abcdefgh', zugang, geraet },
+    { t: 'koppeln', v: 3, geheimnis: 'b'.repeat(22), name: 'Tablet Flur', geraet },
     { t: 'abo', ids: ['zigbee.0.lampe.state', 'hm-rpc.0.ABC:1.LEVEL', 'javascript.0.Küche.Temperatur'] },
     { t: 'setze', n: 7, id: 'zigbee.0.lampe.state', val: true },
     { t: 'akku', stand: 87, laedt: false, zeit },
@@ -33,8 +33,8 @@ const gueltigAnAdapter: Record<string, unknown>[] = [
 ];
 
 const ungueltigAnAdapter: [string, Record<string, unknown>][] = [
-    ['unbekanntes Feld', { t: 'hallo', v: 1, app: 'abcdefgh', zugang, geraet, extra: 1 }],
-    ['Version 3', { t: 'hallo', v: 3, app: 'abcdefgh', zugang, geraet }],
+    ['unbekanntes Feld', { t: 'hallo', v: 3, app: 'abcdefgh', zugang, geraet, extra: 1 }],
+    ['Version 2', { t: 'hallo', v: 2, app: 'abcdefgh', zugang, geraet }],
     ['laufende Nummer 0', { t: 'setze', n: 0, id: 'a.b', val: 1 }],
     ['verbotenes Zeichen in ID', { t: 'setze', n: 1, id: 'a.b*', val: 1 }],
     ['Objekt als Wert', { t: 'setze', n: 1, id: 'a.b', val: { x: 1 } }],
@@ -44,73 +44,111 @@ const ungueltigAnAdapter: [string, Record<string, unknown>][] = [
     ['Nachricht der Gegenrichtung', { t: 'gekoppelt', app: 'abcdefgh', zugang }],
 ];
 
+const handydaten = { akku: true, anruf: false, benachrichtigung: true };
+const an = { id: 'zigbee.0.lampe.state', typ: 'boolean', recht: 'schreiben' };
+const hell = {
+    id: 'zigbee.0.lampe.hell',
+    typ: 'number',
+    einheit: '%',
+    min: 0,
+    max: 100,
+    schritt: 1,
+    recht: 'schreiben',
+};
+const soll = { id: 'heizung.0.soll', typ: 'number', einheit: '°C', min: 5, max: 30, schritt: 0.5, recht: 'schreiben' };
+const temp = { id: 'zigbee.0.sensor.temp', typ: 'number', einheit: '°C', recht: 'lesen', name: 'Temperatur' };
+const ohne = (o: Record<string, unknown>, feld: string): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(o).filter(([k]) => k !== feld));
+const karte = (typ: string, teile: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'k',
+    name: 'Karte',
+    typ,
+    raum: 'enum.rooms.living_room',
+    teile,
+});
+const rechte = (karten: unknown[]): Record<string, unknown> => ({
+    t: 'rechte',
+    profil: 'Gast',
+    raeume: [],
+    karten,
+    handydaten,
+});
+
 const gueltigAnApp: Record<string, unknown>[] = [
     {
         t: 'willkommen',
-        v: 1,
+        v: 3,
         adapter: 'a'.repeat(26),
         adressen: ['192.168.1.5:8095', '[fd00::5]:8095'],
-        handydaten: { akku: true, anruf: false, benachrichtigung: true },
+        handydaten,
         profil: 'Familie',
-        datenpunkte: [
-            { id: 'zigbee.0.lampe.state', name: 'Lampe', typ: 'boolean', rolle: 'switch.light', recht: 'schreiben' },
-            {
-                id: 'heizung.0.modus',
-                name: 'Modus',
-                typ: 'number',
-                auswahl: { 0: 'Aus', 1: 'Komfort' },
-                recht: 'lesen',
-            },
+        raeume: [{ id: 'enum.rooms.living_room', name: 'Wohnzimmer' }],
+        karten: [
+            karte('lampe', {
+                schalten: an,
+                helligkeit: hell,
+                farbe: { id: 'z.0.l.farbe', typ: 'string', recht: 'lesen' },
+                farbtemperatur: { id: 'z.0.l.ct', typ: 'number', min: 153, max: 500, recht: 'schreiben' },
+            }),
+            { id: 'steckdose', name: 'Steckdose', typ: 'schalter', teile: { schalten: { ...an, recht: 'lesen' } } },
+            karte('messwert', {
+                wert1: temp,
+                wert2: {
+                    id: 'z.0.fenster',
+                    typ: 'boolean',
+                    recht: 'lesen',
+                    name: 'Fenster',
+                    auswahl: { true: 'offen' },
+                },
+                wert4: { id: 'z.0.text', typ: 'string', recht: 'lesen', name: '' },
+            }),
+            karte('thermostat', { soll, ist: ohne(temp, 'name') }),
         ],
-        raeume: [{ id: 'enum.rooms.living_room', name: 'Wohnzimmer', mitglieder: ['zigbee.0.lampe.state'] }],
-        funktionen: [],
     },
-    {
-        t: 'rechte',
-        profil: 'Gast',
-        datenpunkte: [],
-        raeume: [],
-        funktionen: [],
-        handydaten: { akku: false, anruf: false, benachrichtigung: false },
-    },
+    rechte([]),
     { t: 'werte', werte: { 'zigbee.0.lampe.state': { val: true, ack: true, ts: zeit }, 'x.0.leer': null } },
     { t: 'quittung', n: 7, ok: false, fehler: 'rechte' },
     { t: 'hinweis', id: 'Ab3_-xY9', titel: 'Waschmaschine', text: 'Fertig', wichtigkeit: 'normal', zeit },
-    { t: 'fehler', code: 'version', unterstuetzt: [1] },
+    { t: 'fehler', code: 'version', unterstuetzt: [3] },
 ];
 
 const ungueltigAnApp: [string, Record<string, unknown>][] = [
-    [
-        'unbekanntes Feld bei zusammengesetzter Nachricht',
-        {
-            t: 'rechte',
-            profil: 'Gast',
-            datenpunkte: [],
-            raeume: [],
-            funktionen: [],
-            handydaten: { akku: false, anruf: false, benachrichtigung: false },
-            extra: true,
-        },
-    ],
-    ['rechte ohne Handydaten', { t: 'rechte', profil: 'Gast', datenpunkte: [], raeume: [], funktionen: [] }],
+    ['unbekanntes Feld bei zusammengesetzter Nachricht', { ...rechte([]), extra: true }],
+    ['rechte ohne Handydaten', { t: 'rechte', profil: 'Gast', raeume: [], karten: [] }],
+    ['einzelne Datenpunkte', { ...rechte([]), datenpunkte: [] }],
     [
         'keine Adresse',
         {
             t: 'willkommen',
-            v: 1,
+            v: 3,
             adapter: 'a'.repeat(26),
             adressen: [],
-            handydaten: { akku: true, anruf: true, benachrichtigung: true },
+            handydaten,
             profil: 'x',
-            datenpunkte: [],
             raeume: [],
-            funktionen: [],
+            karten: [],
         },
     ],
     ['unbekannter Fehlercode', { t: 'fehler', code: 'unbekannt' }],
+    ['unbekannter Kartentyp', rechte([karte('rollladen', { schalten: an })])],
+    ['Karte ohne Teil', rechte([karte('lampe', {})])],
+    ['Teil eines anderen Typs', rechte([karte('lampe', { soll })])],
+    ['Schalter ohne schalten', rechte([karte('schalter', {})])],
+    ['Thermostat ohne Soll', rechte([karte('thermostat', { ist: { ...soll, recht: 'lesen' } })])],
+    ['Schalter als Zahl', rechte([karte('schalter', { schalten: { ...an, typ: 'number' } })])],
+    ['Helligkeit ohne Bereich', rechte([karte('lampe', { helligkeit: { ...an, typ: 'number' } })])],
+    ['Solltemperatur ohne Schritt', rechte([karte('thermostat', { soll: ohne(soll, 'schritt') })])],
+    ['Schritt 0', rechte([karte('lampe', { helligkeit: { ...hell, schritt: 0 } })])],
+    ['Isttemperatur bedienbar', rechte([karte('thermostat', { soll, ist: { ...soll } })])],
+    ['Messwert ohne Bezeichnung', rechte([karte('messwert', { wert1: ohne(temp, 'name') })])],
+    ['Messwert bedienbar', rechte([karte('messwert', { wert1: { ...temp, recht: 'schreiben' } })])],
+    ['Bezeichnung außerhalb des Messwerts', rechte([karte('schalter', { schalten: { ...an, name: 'An' } })])],
+    ['Messwert mit wert5', rechte([karte('messwert', { wert5: temp })])],
+    ['Kartenkennung mit Großbuchstaben', rechte([{ ...karte('schalter', { schalten: an }), id: 'Lampe' }])],
+    ['Raum mit verbotenem Zeichen', rechte([{ ...karte('schalter', { schalten: an }), raum: 'enum.rooms.a*' }])],
 ];
 
-describe('Protokoll v1, Schemata', () => {
+describe('Protokoll 3, Schemata', () => {
     describe('App an Adapter', () => {
         for (const nachricht of gueltigAnAdapter) {
             it(`nimmt an: ${String(nachricht.t)}`, () => {

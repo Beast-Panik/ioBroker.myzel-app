@@ -46,7 +46,10 @@ const schema = {
     },
     nachlaufMin: { type: "integer", minimum: 1, maximum: 120 },
     hinweisFristMin: { type: "integer", minimum: 1, maximum: 1440 },
-    textLaenge: { type: "integer", minimum: 100, maximum: 4e3 }
+    textLaenge: { type: "integer", minimum: 100, maximum: 4e3 },
+    // Einzeln geprüft in app/konfiguration.ts: Eine unbrauchbare Karte soll nicht den ganzen Server aufhalten.
+    karten: { type: "array" },
+    profile: { type: "array" }
   }
 };
 const pruefeEinstellungen = (0, import_schema.erstellePruefer)(schema, [import_gemeinsam_schema.default]);

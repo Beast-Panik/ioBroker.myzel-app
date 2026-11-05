@@ -68,14 +68,110 @@ tests.integration(path.join(__dirname, '..'), {
             let port;
             let identitaet;
 
+            const raum = 'enum.rooms.testraum';
+            const lampe = 'javascript.0.test.lampe';
+            const temperatur = 'javascript.0.test.temperatur';
+            const geheim = 'javascript.0.test.geheim';
+            const altlampe = 'javascript.0.alt.an';
+
             before(async function () {
                 this.timeout(60_000);
                 harness = getHarness();
                 port = await freierPort();
+                for (const [id, common, val] of [
+                    [lampe, { type: 'boolean', role: 'switch', write: true }, false],
+                    [temperatur, { type: 'number', role: 'value.temperature', unit: '°C', write: false }, 21],
+                    [geheim, { type: 'boolean', role: 'switch', write: true }, false],
+                    [altlampe, { type: 'boolean', role: 'switch', write: true }, true],
+                ]) {
+                    await harness.objects.setObjectAsync(id, {
+                        type: 'state',
+                        common: { name: id, read: true, ...common },
+                        native: {},
+                    });
+                    await harness.states.setStateAsync(id, { val, ack: true });
+                }
+                await harness.objects.setObjectAsync(raum, {
+                    type: 'enum',
+                    common: { name: { de: 'Testraum', en: 'Test room' }, members: [] },
+                    native: {},
+                });
                 // Feste Adresse für den QR-Code: Ohne private Schnittstelle (etwa in CI) fände der Adapter keine.
-                await harness.changeAdapterConfig('myzel-app', { native: { port, adressen: [`127.0.0.1:${port}`] } });
+                // Karten und Profile so, wie der Admin sie speichert: flache Zeilen
+                // Direkt am Instanzobjekt: changeAdapterConfig des Testrahmens führt Listen zu Objekten zusammen.
+                const instanz = await harness.objects.getObjectAsync('system.adapter.myzel-app.0');
+                await harness.objects.setObjectAsync('system.adapter.myzel-app.0', {
+                    ...instanz,
+                    native: {
+                        ...instanz.native,
+                        port,
+                        adressen: [`127.0.0.1:${port}`],
+                        karten: [
+                            { id: 'lampe', name: 'Lampe', typ: 'schalter', raum, schalten: lampe },
+                            {
+                                id: 'klima',
+                                name: 'Klima',
+                                typ: 'messwert',
+                                raum,
+                                wert1: temperatur,
+                                bezeichnung1: 'Innen',
+                            },
+                            { id: 'geheim', name: 'Geheim', typ: 'schalter', raum: '', schalten: geheim },
+                        ],
+                        profile: [
+                            {
+                                id: 'familie',
+                                name: 'Familie',
+                                raeumeSchreiben: [raum],
+                                raeumeLesen: [],
+                                kartenSchreiben: [],
+                                kartenLesen: ['altlampe'],
+                                gesperrt: [],
+                            },
+                        ],
+                    },
+                });
+                // Stände früherer Versionen als Objekte, die der Start in die Einstellungen übernimmt
+                for (const [id, native] of [
+                    ['geraete.altlampe', { name: 'Altlampe', typ: 'lampe', teile: { schalten: altlampe } }],
+                    [
+                        'karten.altschalter',
+                        { name: 'Altschalter', typ: 'schalter', raum: '', teile: { schalten: 'javascript.0.alt.aus' } },
+                    ],
+                    [
+                        'profile.alt',
+                        { name: 'Alt', raeume: [], freigaben: [{ id: 'a.b', recht: 'lesen' }], sperren: [] },
+                    ],
+                ]) {
+                    await harness.objects.setObjectAsync(`myzel-app.0.${id}`, { type: 'config', common: {}, native });
+                }
                 await harness.startAdapterAndWait(true);
                 identitaet = (await harness.objects.getObjectAsync('myzel-app.0.identitaet')).native;
+            });
+
+            it('übernimmt Geräte, Karten und Profile früherer Stände in die Einstellungen und löscht die Objekte', async () => {
+                for (const id of ['geraete.altlampe', 'karten.altschalter', 'profile.alt']) {
+                    expect(await harness.objects.getObjectAsync(`myzel-app.0.${id}`), id).to.equal(null);
+                }
+                const { karten, profile } = (await harness.objects.getObjectAsync('system.adapter.myzel-app.0')).native;
+                expect(karten.map(k => k.id)).to.deep.equal(['lampe', 'klima', 'geheim', 'altlampe', 'altschalter']);
+                expect(karten[3]).to.deep.equal({
+                    id: 'altlampe',
+                    name: 'Altlampe',
+                    typ: 'lampe',
+                    raum: '',
+                    schalten: altlampe,
+                });
+                expect(profile.map(p => p.id)).to.deep.equal(['familie', 'alt']);
+                expect(profile[1]).to.deep.equal({
+                    id: 'alt',
+                    name: 'Alt',
+                    raeumeSchreiben: [],
+                    raeumeLesen: [],
+                    kartenSchreiben: [],
+                    kartenLesen: [],
+                    gesperrt: [],
+                });
             });
 
             it('erzeugt beim ersten Start Adapter-ID und Zertifikat, den Schlüssel verschlüsselt', async () => {
@@ -122,7 +218,7 @@ tests.integration(path.join(__dirname, '..'), {
                 const online = async () =>
                     (await harness.states.getStateAsync('myzel-app.0.apps.abcdefgh.online'))?.val;
 
-                const ok = await anmelden(port, fp, { t: 'hallo', v: 1, app: 'abcdefgh', zugang, geraet });
+                const ok = await anmelden(port, fp, { t: 'hallo', v: 3, app: 'abcdefgh', zugang, geraet });
                 expect(ok.erste).to.include({ t: 'willkommen', adapter: identitaet.adapterId });
                 await bis(async () => (await online()) === true);
                 ok.ws.close();
@@ -130,7 +226,7 @@ tests.integration(path.join(__dirname, '..'), {
 
                 const falsch = await anmelden(port, fp, {
                     t: 'hallo',
-                    v: 1,
+                    v: 3,
                     app: 'abcdefgh',
                     zugang: 'A'.repeat(43),
                     geraet,
@@ -138,59 +234,28 @@ tests.integration(path.join(__dirname, '..'), {
                 expect(falsch.erste).to.deep.equal({ t: 'fehler', code: 'zugang' });
                 expect(await falsch.geschlossen).to.equal(4001);
             });
-            it('liest und schreibt Datenpunkte nach Profil und Raum', async () => {
-                const lampe = 'javascript.0.test.lampe';
-                const temperatur = 'javascript.0.test.temperatur';
-                const geheim = 'javascript.0.test.geheim';
-                const datenpunkte = [
-                    [lampe, { type: 'boolean', role: 'switch', write: true }, false],
-                    [temperatur, { type: 'number', role: 'value.temperature', unit: '°C', write: false }, 21],
-                    [geheim, { type: 'boolean', role: 'switch', write: true }, false],
-                ];
-                for (const [id, common, val] of datenpunkte) {
-                    await harness.objects.setObjectAsync(id, {
-                        type: 'state',
-                        common: { name: id, read: true, ...common },
-                        native: {},
-                    });
-                    await harness.states.setStateAsync(id, { val, ack: true });
-                }
-                await harness.objects.setObjectAsync('enum.rooms.testraum', {
-                    type: 'enum',
-                    common: { name: { de: 'Testraum', en: 'Test room' }, members: [lampe, temperatur] },
-                    native: {},
-                });
-                await harness.objects.setObjectAsync('myzel-app.0.profile.familie', {
-                    type: 'config',
-                    common: { name: 'Familie' },
-                    native: {
-                        name: 'Familie',
-                        raeume: [{ enum: 'enum.rooms.testraum', recht: 'schreiben' }],
-                        freigaben: [],
-                        sperren: [],
-                    },
-                });
+            it('liest und schreibt Datenpunkte der Karten nach Profil, Raum und einzelner Freigabe', async () => {
                 const zugang = await legeApp('bcdefghi', 'familie');
                 const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
                     t: 'hallo',
-                    v: 1,
+                    v: 3,
                     app: 'bcdefghi',
                     zugang,
                     geraet,
                 });
 
                 expect(app.erste.profil).to.equal('Familie');
-                expect(app.erste.datenpunkte.map(d => [d.id, d.recht])).to.deep.equal([
-                    [lampe, 'schreiben'],
-                    [temperatur, 'lesen'],
+                // altlampe kam erst beim Start aus einem Gerät von 0.1.x und ist ohne Neustart da
+                expect(
+                    app.erste.karten.map(k => [k.id, k.raum, Object.values(k.teile).map(t => [t.recht, t.name])]),
+                ).to.deep.equal([
+                    ['altlampe', undefined, [['lesen', undefined]]],
+                    ['klima', raum, [['lesen', 'Innen']]],
+                    ['lampe', raum, [['schreiben', undefined]]],
                 ]);
                 const sprache = (await harness.objects.getObjectAsync('system.config')).common.language;
                 expect(app.erste.raeume).to.deep.equal([
-                    {
-                        id: 'enum.rooms.testraum',
-                        name: sprache === 'de' ? 'Testraum' : 'Test room',
-                        mitglieder: [lampe, temperatur],
-                    },
+                    { id: raum, name: sprache === 'de' ? 'Testraum' : 'Test room' },
                 ]);
 
                 app.ws.send(JSON.stringify({ t: 'abo', ids: [lampe, temperatur, geheim] }));
@@ -216,46 +281,36 @@ tests.integration(path.join(__dirname, '..'), {
                 app.ws.close();
             });
 
-            it('schickt rechte bei Änderungen an Profil und Raum und trennt eine entfernte App', async function () {
+            // Karten und Profile ändert nur das Speichern der Einstellungen, und das startet die Instanz neu. Ohne Neustart
+            // wirken Datenpunkte, Räume und die Apps selbst.
+            it('schickt rechte bei Änderungen an Datenpunkt und Raum und trennt eine entfernte App', async function () {
                 this.timeout(30_000);
-                const lampe = 'javascript.0.test.lampe';
-                const temperatur = 'javascript.0.test.temperatur';
-                const geheim = 'javascript.0.test.geheim';
                 const zugang = await legeApp('cdefghij', 'familie');
                 const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
                     t: 'hallo',
-                    v: 1,
+                    v: 3,
                     app: 'cdefghij',
                     zugang,
                     geraet,
                 });
-                expect(app.erste.datenpunkte.map(d => d.id)).to.deep.equal([lampe, temperatur]);
-                app.ws.send(JSON.stringify({ t: 'abo', ids: [lampe, temperatur] }));
-                expect((await app.naechste()).t).to.equal('werte');
+                const recht = karten => karten.find(k => k.id === 'lampe').teile.schalten.recht;
+                expect(recht(app.erste.karten)).to.equal('schreiben');
 
-                await harness.objects.setObjectAsync('myzel-app.0.profile.familie', {
-                    type: 'config',
-                    common: { name: 'Familie' },
-                    native: {
-                        name: 'Familie',
-                        raeume: [{ enum: 'enum.rooms.testraum', recht: 'schreiben' }],
-                        freigaben: [],
-                        sperren: [lampe],
-                    },
-                });
+                const objekt = await harness.objects.getObjectAsync(lampe);
+                await harness.objects.setObjectAsync(lampe, { ...objekt, common: { ...objekt.common, write: false } });
                 const rechte = await app.naechste(5000);
                 expect(rechte.t).to.equal('rechte');
-                expect(rechte.datenpunkte.map(d => d.id)).to.deep.equal([temperatur]);
-                await harness.states.setStateAsync(lampe, { val: false, ack: true });
-                await harness.states.setStateAsync(temperatur, { val: 23, ack: true });
-                expect(Object.keys((await app.naechste()).werte)).to.deep.equal([temperatur]);
+                expect(recht(rechte.karten)).to.equal('lesen');
 
-                await harness.objects.setObjectAsync('enum.rooms.testraum', {
-                    type: 'enum',
-                    common: { name: { de: 'Testraum', en: 'Test room' }, members: [lampe, temperatur, geheim] },
-                    native: {},
+                const zimmer = await harness.objects.getObjectAsync(raum);
+                await harness.objects.setObjectAsync(raum, {
+                    ...zimmer,
+                    common: { ...zimmer.common, name: { de: 'Wohnraum', en: 'Living room' } },
                 });
-                expect((await app.naechste(5000)).datenpunkte.map(d => d.id)).to.deep.equal([geheim, temperatur]);
+                const sprache = (await harness.objects.getObjectAsync('system.config')).common.language;
+                expect((await app.naechste(5000)).raeume).to.deep.equal([
+                    { id: raum, name: sprache === 'de' ? 'Wohnraum' : 'Living room' },
+                ]);
 
                 await harness.objects.delObjectAsync('myzel-app.0.apps.cdefghij');
                 expect(await app.geschlossen).to.equal(4008);
@@ -265,7 +320,7 @@ tests.integration(path.join(__dirname, '..'), {
                 const zugang = await legeApp('defghijk', '', { akku: true, anruf: false, benachrichtigung: true });
                 const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
                     t: 'hallo',
-                    v: 1,
+                    v: 3,
                     app: 'defghijk',
                     zugang,
                     geraet,
@@ -319,7 +374,7 @@ tests.integration(path.join(__dirname, '..'), {
                 });
                 const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
                     t: 'hallo',
-                    v: 1,
+                    v: 3,
                     app: 'efghijkl',
                     zugang,
                     geraet,
@@ -348,18 +403,34 @@ tests.integration(path.join(__dirname, '..'), {
                 app.ws.close();
             });
 
-            // Über das Nachrichtenfach wie der Admin: jede Antwort der GUI eine eigene Nachricht mit origin
+            // Über das Nachrichtenfach wie der Admin: jede Antwort der GUI eine eigene Nachricht mit origin.
+            // Nacheinander: sendTo des Testrahmens ordnet Antworten nicht der Anfrage zu.
+            const frage = (command, message) =>
+                new Promise(resolve => harness.sendTo('myzel-app.0', command, message, resolve));
+
+            it('liefert die Auswahllisten der Reiter Profile: Räume aus ioBroker, Karten aus dem Formular', async () => {
+                await harness.enableSendTo();
+                expect(await frage('raeume', {})).to.deep.include({
+                    value: raum,
+                    label: { en: 'Living room', de: 'Wohnraum' },
+                });
+                expect(
+                    await frage('karten', {
+                        karten: [
+                            { id: 'neu', name: 'Neu', typ: 'thermostat', raum },
+                            { id: 'ohne', name: '', typ: 'lampe', raum: '' },
+                        ],
+                    }),
+                ).to.deep.equal([
+                    { value: 'neu', label: { en: 'Neu (Thermostat, Living room)', de: 'Neu (Thermostat, Wohnraum)' } },
+                ]);
+                expect(await frage('karten', null)).to.deep.equal([]);
+            });
+
             it('Gerätemanager: koppelt per QR-Code, wählt das Profil, entfernt die App', async function () {
                 this.timeout(30_000);
-                await harness.enableSendTo();
-                // Nacheinander: sendTo des Testrahmens ordnet Antworten nicht der Anfrage zu
-                const dm = (command, message) =>
-                    new Promise(resolve => harness.sendTo('myzel-app.0', command, message, resolve));
-                expect((await dm('dm:instanceInfo', null)).actions.map(a => a.id)).to.deep.equal([
-                    'koppeln',
-                    'profile',
-                    'geraete',
-                ]);
+                const dm = frage;
+                expect((await dm('dm:instanceInfo', null)).actions.map(a => a.id)).to.deep.equal(['koppeln']);
 
                 const formular = await dm('dm:instanceAction', { actionId: 'koppeln' });
                 const { origin } = formular;
@@ -374,7 +445,7 @@ tests.integration(path.join(__dirname, '..'), {
                 const fortschritt = dm('dm:actionProgress', { origin });
                 const kopplung = anmelden(port, fp, {
                     t: 'koppeln',
-                    v: 1,
+                    v: 3,
                     geheimnis: qr.searchParams.get('g'),
                     name: 'Tablet Flur',
                     geraet,
@@ -394,7 +465,7 @@ tests.integration(path.join(__dirname, '..'), {
                 expect(geraete.add.map(g => [g.id, g.name])).to.deep.include([appId, 'Tablet Flur']);
                 const wahl = await dm('dm:deviceAction', { deviceId: appId, actionId: 'profil' });
                 await dm('dm:actionProgress', { origin: wahl.origin, data: { profil: '' } });
-                expect((await app.naechste(5000)).datenpunkte).to.deep.equal([]);
+                expect((await app.naechste(5000)).karten).to.deep.equal([]);
                 expect((await harness.objects.getObjectAsync(`myzel-app.0.apps.${appId}`)).native.profil).to.equal('');
                 expect((await harness.states.getStateAsync(`myzel-app.0.apps.${appId}.profil`)).val).to.equal('');
 

@@ -2,8 +2,12 @@
 
 import { native } from '../../io-package.json';
 
-// Aus dem leeren Array in io-package.json leitet TypeScript never[] ab.
-type _AdapterConfig = Omit<typeof native, 'adressen'> & { adressen: string[] };
+// Aus den leeren Arrays in io-package.json leitet TypeScript never[] ab. Karten und Profile prüft app/konfiguration.ts.
+type _AdapterConfig = Omit<typeof native, 'adressen' | 'karten' | 'profile'> & {
+    adressen: string[];
+    karten: unknown[];
+    profile: unknown[];
+};
 
 declare global {
     namespace ioBroker {

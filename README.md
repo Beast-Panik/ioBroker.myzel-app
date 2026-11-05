@@ -7,6 +7,8 @@ Protokoll: [protokoll/v1/](protokoll/v1/), eine Quelle für Adapter und App.
 
 ## Stand
 
+Seit K1 (0.2.0) bekommen Apps keine einzelnen Datenpunkte mehr, nur fertige Karten. A3, A4 und G1 beschreiben den früheren Stand.
+
 A2: Der Adapter erzeugt beim ersten Start Adapter-ID, Schlüssel und Zertifikat (Objekt `identitaet`) und öffnet den TLS-Server für Apps im Heimnetz. Kopplung und Anmeldung laufen nach Protokoll, mit Ratenbegrenzung und Sperren. Den Kopplungsdialog im Admin gibt es erst mit A7; bis dahin rufen nur Tests die Kopplung auf.
 
 A3: Angemeldete Apps sehen die Datenpunkte ihres Profils (Räume, Einzelfreigaben, Sperren), gegliedert nach Räumen und Funktionen, abonnieren Werte und setzen sie. Profile liegen als Objekte `profile.<id>` und werden bis A7 von Hand angelegt.
@@ -22,6 +24,10 @@ A7: Gerätemanager im Admin: Apps per QR-Code koppeln, Profile bearbeiten, je Ap
 A8: App-Simulator und Sicherheitsprüfung. Der Adapter nimmt nur Verbindungen aus dem Heimnetz an: private Bereiche und die Netze der eigenen Schnittstellen. CGNAT-Adressen wie bei Tailscale gelten nicht als Heimnetz. Die Datenpunkte der Apps (Anrufe, Benachrichtigungen) gibt nur eine Einzelfreigabe frei, kein Raum. Sperren und `system.*` gelten auch für das Ziel eines Alias.
 
 G1: Geräte als Kacheln (KONZEPT-GERAETE.md). Die Aktion „Geräte“ im Gerätemanager legt Lampen als Objekte `geraete.<id>` an, je Teil (An und aus, Helligkeit, Farbe RGB, Lichtfarbe) ein Datenpunkt. Geräte geben keine Rechte: Eine App bekommt ein Gerät nur mit den Teilen, die ihr Profil freigibt und deren Typ passt. Ein Datenpunkt gehört zu höchstens einem Gerät. Geräte gehen nur an Apps mit Protokoll 2; der Adapter antwortet in der Version der App. Geprüft im Test-ioBroker mit Admin und Simulator in Protokoll 1 und 2.
+
+K1: Karten statt Datenpunkte (KONZEPT-KARTEN.md). Die Aktion „Karten“ im Gerätemanager legt Karten als Objekte `karten.<id>` an: Lampe, Schalter, Messwert mit bis zu vier Werten und Thermostat, jede mit Raum und je Teil einem Datenpunkt. Die Karten stehen im Gerätemanager neben den Apps und lassen sich dort bedienen. Profile geben Räume frei (alle Karten des Raums) und einzelne Karten, auch mit anderem Recht; gesperrte Karten fehlen. Seit K3 liegen Karten und Profile in eigenen Reitern der Instanzeinstellungen, siehe dort. Karten mit Datenpunkten der Apps gibt nur eine Einzelfreigabe frei. Apps bekommen die Karten mit Einheit, Bereich und Schritt für Regler in Protokoll 3; Apps mit Protokoll 1 oder 2 bekommen `fehler version`. `abo` und `setze` gehen weiter je Datenpunkt, nur für Teile freigegebener Karten. Beim ersten Start werden Geräte zu Lampenkarten im Raum ihres ersten Teils, Profile verlieren die Freigaben und Sperren von Datenpunkten, mit Warnung im Log.
+
+K3: Karten und Profile haben je einen eigenen Reiter in den Instanzeinstellungen: Apps, Karten, Profile, Einstellungen. Der Gerätemanager im Reiter Apps und damit der Reiter „Geräte“ des Admins zeigen nur noch Apps. Karten und Profile stehen in `native.karten` und `native.profile`; neue bekommen eine feste ID aus der Zeit. Die Auswahllisten im Profil zeigen Räume und Karten mit Namen. Speichern startet die Instanz neu, verbundene Apps sind wenige Sekunden getrennt. Beim Start meldet der Adapter unbrauchbare Zeilen und unpassende Datenpunkte im Log. Geräte, Karten- und Profilobjekte früherer Stände übernimmt der Start in die Einstellungen und löscht die Objekte.
 
 ## Entwickeln
 
@@ -48,7 +54,6 @@ QR-Leser als Text scannen.
 npm run simulator -- koppeln "myzelapp://koppeln?v=1&a=…" --name "Tablet Flur"
 npm run simulator -- verbinden --bestaetigen
 npm run simulator -- verbinden --adresse 127.0.0.1:18095    # Test-ioBroker in Docker über die Portweiterleitung
-npm run simulator -- verbinden --version 1                  # wie eine App mit Protokoll 1, ohne Geräte
 ```
 
 Danach Befehle je Zeile, etwa `abo 0_userdata.0.lampe`, `setze 0_userdata.0.lampe true`, `akku 80 laedt`,
@@ -80,7 +85,7 @@ Nach GitHub überträgt `dev/adapter-auf-github.sh` im Hauptrepository den commi
 
 ```
 npm run paket
-docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker url /opt/projekt/ioBroker.myzel-app/iobroker.myzel-app-0.1.0.tgz
+docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker url /opt/projekt/ioBroker.myzel-app/iobroker.myzel-app-0.2.0.tgz
 docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker add myzel-app
 docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 ```
@@ -88,6 +93,10 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.2.0
+
+Karten statt Datenpunkte: Lampen, Schalter, Messwerte mit bis zu vier Werten und Thermostate mit Raum, im eigenen Reiter „Karten“ der Instanzeinstellungen. Profile im Reiter „Profile“ geben Räume und einzelne Karten frei und sperren Karten. Der Gerätemanager im Reiter „Apps“ zeigt nur Apps. Speichern startet die Instanz neu; unbrauchbare Karten und unpassende Datenpunkte stehen beim Start im Log. Protokoll 3 mit `karten` und `raeume`, ohne `datenpunkte`, `funktionen` und `geraete`; Apps mit Protokoll 1 oder 2 bekommen `fehler version`. Der Adapter liefert Bereich und Schritt für Regler. Beim ersten Start werden Geräte zu Lampenkarten und Profile auf Karten umgestellt, beides in die Instanzeinstellungen
 
 ### 0.1.0
 

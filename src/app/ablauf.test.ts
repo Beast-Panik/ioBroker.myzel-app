@@ -9,7 +9,7 @@ import { GRENZEN, type Grenzen, type Protokoll } from '../basis/grenzen';
 import { SCHLIESSCODE } from '../basis/kern';
 import { neueAdapterId, neuerZugang, sha256 } from '../basis/kodierung';
 import { erzeugeIdentitaet, fingerabdruck } from '../basis/zertifikat';
-import type { Profil } from './rechte';
+import type { Karte, Profil } from './rechte';
 import { type Server, starteServer } from './server';
 
 interface Umgebung {
@@ -21,11 +21,17 @@ interface Umgebung {
 }
 
 const WOHNZIMMER = { de: 'Wohnzimmer', en: 'Living room' };
+const LAMPE: Karte = {
+    name: 'Lampe',
+    typ: 'lampe',
+    raum: 'enum.rooms.wohnzimmer',
+    teile: { schalten: 'zigbee.0.lampe.state', helligkeit: 'zigbee.0.lampe.helligkeit' },
+};
 const familie = (teil: Partial<Profil>): Profil => ({
     name: 'Familie',
     raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'schreiben' }],
-    freigaben: [],
-    sperren: [],
+    karten: [],
+    gesperrt: [],
     ...teil,
 });
 
@@ -38,10 +44,21 @@ function welt(log: Protokoll): Speicherquelle {
             false,
         )
         .datenpunkt('zigbee.0.lampe.helligkeit', { type: 'number', min: 0, max: 100, unit: '%' }, 40)
-        .datenpunkt('zigbee.0.sensor.temperatur', { type: 'number', write: false, unit: '°C' }, 21.5)
+        .datenpunkt(
+            'zigbee.0.sensor.temperatur',
+            { type: 'number', write: false, unit: '°C', name: { de: 'Temperatur', en: 'Temperature' } },
+            21.5,
+        )
         .datenpunkt('zigbee.0.tuer.offen', { type: 'boolean' }, false)
-        .raum('wohnzimmer', WOHNZIMMER, ['zigbee.0.lampe', 'zigbee.0.sensor'])
-        .funktion('licht', 'Licht', ['zigbee.0.lampe.state'])
+        .raum('wohnzimmer', WOHNZIMMER, [])
+        .karte('lampe', LAMPE)
+        .karte('temperatur', {
+            name: 'Fühler',
+            typ: 'messwert',
+            raum: 'enum.rooms.wohnzimmer',
+            teile: { wert1: 'zigbee.0.sensor.temperatur' },
+        })
+        .karte('tuer', { name: 'Tür', typ: 'messwert', raum: '', teile: { wert1: 'zigbee.0.tuer.offen' } })
         .profil('familie', familie({}));
 }
 
@@ -125,7 +142,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
 
     async function kopple(
         profil = 'familie',
-        version = 1,
+        version = 3,
     ): Promise<{
         g: Gegenstelle;
         appId: string;
@@ -149,7 +166,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         appId: string,
         zugang: string,
         o?: Parameters<typeof Gegenstelle.verbinde>[2],
-        version = 1,
+        version = 3,
     ): Promise<Gegenstelle> {
         const g = await verbinde(o);
         g.sende({ t: 'hallo', v: version, app: appId, zugang, geraet });
@@ -208,46 +225,47 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         const { g, appId, zugang, willkommen } = await kopple();
         expect(willkommen).to.deep.equal({
             t: 'willkommen',
-            v: 1,
+            v: 3,
             adapter: adapterId,
             adressen: [`127.0.0.1:${u.port}`],
             handydaten: { akku: false, anruf: false, benachrichtigung: false },
             profil: 'Familie',
-            datenpunkte: [
+            raeume: [{ id: 'enum.rooms.wohnzimmer', name: 'Wohnzimmer' }],
+            karten: [
                 {
-                    id: 'zigbee.0.lampe.helligkeit',
-                    name: 'zigbee.0.lampe.helligkeit',
-                    typ: 'number',
-                    rolle: 'state',
-                    einheit: '%',
-                    min: 0,
-                    max: 100,
-                    recht: 'schreiben',
-                },
-                {
-                    id: 'zigbee.0.lampe.state',
+                    id: 'lampe',
                     name: 'Lampe',
-                    typ: 'boolean',
-                    rolle: 'switch.light',
-                    recht: 'schreiben',
+                    typ: 'lampe',
+                    raum: 'enum.rooms.wohnzimmer',
+                    teile: {
+                        schalten: { id: 'zigbee.0.lampe.state', typ: 'boolean', recht: 'schreiben' },
+                        helligkeit: {
+                            id: 'zigbee.0.lampe.helligkeit',
+                            typ: 'number',
+                            einheit: '%',
+                            min: 0,
+                            max: 100,
+                            schritt: 1,
+                            recht: 'schreiben',
+                        },
+                    },
                 },
                 {
-                    id: 'zigbee.0.sensor.temperatur',
-                    name: 'zigbee.0.sensor.temperatur',
-                    typ: 'number',
-                    rolle: 'state',
-                    einheit: '°C',
-                    recht: 'lesen',
+                    id: 'temperatur',
+                    name: 'Fühler',
+                    typ: 'messwert',
+                    raum: 'enum.rooms.wohnzimmer',
+                    teile: {
+                        wert1: {
+                            id: 'zigbee.0.sensor.temperatur',
+                            typ: 'number',
+                            einheit: '°C',
+                            recht: 'lesen',
+                            name: 'Temperatur',
+                        },
+                    },
                 },
             ],
-            raeume: [
-                {
-                    id: 'enum.rooms.wohnzimmer',
-                    name: 'Wohnzimmer',
-                    mitglieder: ['zigbee.0.lampe.helligkeit', 'zigbee.0.lampe.state', 'zigbee.0.sensor.temperatur'],
-                },
-            ],
-            funktionen: [{ id: 'enum.functions.licht', name: 'Licht', mitglieder: ['zigbee.0.lampe.state'] }],
         });
         const daten = u.ablage.apps.get(appId)!;
         expect(daten).to.include({
@@ -266,7 +284,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         const { g: erste, appId, zugang } = await kopple();
         erste.schliesse();
         const g = await verbinde();
-        g.sende({ t: 'hallo', v: 1, app: appId, zugang, geraet: { android: '16', appVersion: '1.1.0' } });
+        g.sende({ t: 'hallo', v: 3, app: appId, zugang, geraet: { android: '16', appVersion: '1.1.0' } });
         expect((await g.naechste()).t).to.equal('willkommen');
         expect(u.ablage.apps.get(appId)?.geraet).to.deep.equal({ android: '16', appVersion: '1.1.0' });
         g.schliesse();
@@ -285,17 +303,17 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
     it('lehnt ein falsches Geheimnis mit 4001 ab', async () => {
         u.server.kopplung.starte();
         const g = await verbinde();
-        g.sende({ t: 'koppeln', v: 1, geheimnis: 'A'.repeat(22), name: 'X', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis: 'A'.repeat(22), name: 'X', geraet });
         await erwarteFehler(g, 'zugang', SCHLIESSCODE.zugang);
     });
 
     it('nimmt ein Geheimnis nur einmal an', async () => {
         const { geheimnis } = u.server.kopplung.starte();
         const erste = await verbinde();
-        erste.sende({ t: 'koppeln', v: 1, geheimnis, name: 'Erste', geraet });
+        erste.sende({ t: 'koppeln', v: 3, geheimnis, name: 'Erste', geraet });
         await u.server.kopplung.warte(2000);
         const zweite = await verbinde();
-        zweite.sende({ t: 'koppeln', v: 1, geheimnis, name: 'Zweite', geraet });
+        zweite.sende({ t: 'koppeln', v: 3, geheimnis, name: 'Zweite', geraet });
         await erwarteFehler(zweite, 'zugang', SCHLIESSCODE.zugang);
         erste.schliesse();
     });
@@ -305,11 +323,11 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         const { geheimnis } = u.server.kopplung.starte();
         for (let i = 0; i < 6; i++) {
             const g = await verbinde();
-            g.sende({ t: 'koppeln', v: 1, geheimnis: `${'B'.repeat(21)}${i}`, name: 'X', geraet });
+            g.sende({ t: 'koppeln', v: 3, geheimnis: `${'B'.repeat(21)}${i}`, name: 'X', geraet });
             await erwarteFehler(g, 'zugang', SCHLIESSCODE.zugang);
         }
         const g = await verbinde();
-        g.sende({ t: 'koppeln', v: 1, geheimnis, name: 'Richtig', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis, name: 'Richtig', geraet });
         expect((await u.server.kopplung.warte(2000))?.name).to.equal('Richtig');
         g.schliesse();
     });
@@ -318,14 +336,14 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         const { geheimnis } = u.server.kopplung.starte();
         u.server.kopplung.starte();
         const g = await verbinde();
-        g.sende({ t: 'koppeln', v: 1, geheimnis, name: 'X', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis, name: 'X', geraet });
         await erwarteFehler(g, 'zugang', SCHLIESSCODE.zugang);
     });
 
     it('Ablehnung im Admin: fehler abgelehnt und 4005', async () => {
         const { geheimnis } = u.server.kopplung.starte();
         const g = await verbinde();
-        g.sende({ t: 'koppeln', v: 1, geheimnis, name: 'X', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis, name: 'X', geraet });
         u.server.kopplung.ablehnen((await u.server.kopplung.warte(2000))!);
         await erwarteFehler(g, 'abgelehnt', SCHLIESSCODE.abgelehnt);
     });
@@ -334,7 +352,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         await starte({ einmalMs: 300 });
         const { geheimnis } = u.server.kopplung.starte();
         const g = await verbinde();
-        g.sende({ t: 'koppeln', v: 1, geheimnis, name: 'X', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis, name: 'X', geraet });
         const anfrage = await u.server.kopplung.warte(2000);
         await erwarteFehler(g, 'abgelaufen', SCHLIESSCODE.abgelaufen);
         expect(await u.server.dienst.kopplungAnnehmen(anfrage!, 'familie')).to.equal(undefined);
@@ -344,25 +362,28 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
     it('trennt eine App, die während der Kopplung schon Nachrichten schickt', async () => {
         const { geheimnis } = u.server.kopplung.starte();
         const g = await verbinde();
-        g.sende({ t: 'koppeln', v: 1, geheimnis, name: 'X', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis, name: 'X', geraet });
         const anfrage = await u.server.kopplung.warte(2000);
         g.sende({ t: 'abo', ids: [] });
         await erwarteFehler(g, 'ungueltig', SCHLIESSCODE.ungueltig);
         expect(await u.server.dienst.kopplungAnnehmen(anfrage!, 'familie')).to.equal(undefined);
     });
 
-    it('neuere Protokollversion: fehler version mit den unterstützten Versionen und 4002', async () => {
+    it('andere Protokollversion: fehler version mit den unterstützten Versionen und 4002', async () => {
         const g = await verbinde();
-        g.sende({ t: 'hallo', v: 3, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
+        g.sende({ t: 'hallo', v: 4, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
         const fehler = await erwarteFehler(g, 'version', SCHLIESSCODE.version);
-        expect(fehler.unterstuetzt).to.deep.equal([1, 2]);
+        expect(fehler.unterstuetzt).to.deep.equal([3]);
+        const alt = await verbinde();
+        alt.sende({ t: 'koppeln', v: 2, geheimnis: 'A'.repeat(22), name: 'X', geraet });
+        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3]);
     });
 
     const vorher: [string, string | Buffer][] = [
         ['kaputtes JSON', '{"t":'],
         ['Binärframe', Buffer.from('{"t":"hallo"}')],
         ['abo vor der Anmeldung', '{"t":"abo","ids":[]}'],
-        ['hallo mit falschem Feld', JSON.stringify({ t: 'hallo', v: 1, app: 'ABCDEFGH', zugang: 'x', geraet })],
+        ['hallo mit falschem Feld', JSON.stringify({ t: 'hallo', v: 3, app: 'ABCDEFGH', zugang: 'x', geraet })],
     ];
     for (const [fall, daten] of vorher) {
         it(`vor der Anmeldung trennt jeder Fehler mit 4003: ${fall}`, async () => {
@@ -444,7 +465,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         const { g } = await kopple();
         g.sende({ t: 'setze', n: 4, id: 'a.b*', val: 1 });
         expect(await g.naechste()).to.include({ t: 'fehler', code: 'ungueltig', n: 4 });
-        g.sende({ t: 'hallo', v: 1, app: 'abcdefgh', zugang: neuerZugang(), geraet });
+        g.sende({ t: 'hallo', v: 3, app: 'abcdefgh', zugang: neuerZugang(), geraet });
         expect(await g.naechste()).to.include({ t: 'fehler', code: 'ungueltig', text: 'hallo nach der Anmeldung' });
         g.sendeRoh('kaputt');
         await erwarteFehler(g, 'ungueltig', SCHLIESSCODE.ungueltig);
@@ -499,7 +520,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
     it('ohne Profil sieht eine App nichts', async () => {
         const { g, willkommen } = await kopple('');
         expect(willkommen).to.include({ profil: '' });
-        expect(willkommen.datenpunkte).to.deep.equal([]);
+        expect(willkommen.karten).to.deep.equal([]);
         g.sende({ t: 'abo', ids: ['zigbee.0.lampe.state'] });
         expect(await g.naechste()).to.include({ t: 'fehler', code: 'rechte' });
         expect(await g.naechste()).to.deep.equal({ t: 'werte', werte: {} });
@@ -539,8 +560,17 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         for (let i = 0; i < 40; i++) {
             u.quelle.datenpunkt(`zigbee.0.lampe.text${i}`, { type: 'string' }, `${i}`.padEnd(10_000, 'x'));
         }
+        for (let k = 0; k < 10; k++) {
+            const teile = Object.fromEntries(
+                [1, 2, 3, 4].map(w => [`wert${w}`, `zigbee.0.lampe.text${k * 4 + w - 1}`]),
+            );
+            u.quelle.karte(`text${k}`, { name: `Text ${k}`, typ: 'messwert', raum: 'enum.rooms.wohnzimmer', teile });
+        }
         const { g, willkommen } = await kopple();
-        const ids: string[] = willkommen.datenpunkte.map((d: { id: string }) => d.id);
+        const ids: string[] = willkommen.karten.flatMap((k: { teile: Record<string, { id: string }> }) =>
+            Object.values(k.teile).map(t => t.id),
+        );
+        expect(ids).to.have.length(43);
         g.sende({ t: 'abo', ids });
         const erhalten: string[] = [];
         while (erhalten.length < ids.length) {
@@ -635,14 +665,16 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         u.quelle.extern('zigbee.0.sensor.temperatur', 23);
         u.quelle.profil(
             'familie',
-            familie({ raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'lesen' }], sperren: ['zigbee.0.sensor'] }),
+            familie({ raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'lesen' }], gesperrt: ['temperatur'] }),
         );
         const rechte = await g.naechste();
         expect(rechte).to.include({ t: 'rechte', profil: 'Familie' });
-        expect(rechte.datenpunkte.map((d: Record<string, string>) => [d.id, d.recht])).to.deep.equal([
-            ['zigbee.0.lampe.helligkeit', 'lesen'],
-            ['zigbee.0.lampe.state', 'lesen'],
-        ]);
+        expect(
+            rechte.karten.map((k: { id: string; teile: Record<string, { recht: string }> }) => [
+                k.id,
+                Object.values(k.teile).map(t => t.recht),
+            ]),
+        ).to.deep.equal([['lampe', ['lesen', 'lesen']]]);
         await bis(() => !u.quelle.abonniert.has('zigbee.0.sensor.temperatur'));
         expect(u.quelle.abonniert).to.deep.equal(new Set(['zigbee.0.lampe.state']));
         await pause(150);
@@ -657,14 +689,11 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         u.quelle
             .datenpunkt('zigbee.0.lampe.farbe', { type: 'string' })
             .entferne('zigbee.0.sensor.temperatur')
-            .raum('wohnzimmer', WOHNZIMMER, ['zigbee.0.lampe', 'zigbee.0.sensor', 'zigbee.0.tuer']);
+            .karte('lampe', { ...LAMPE, teile: { ...LAMPE.teile, farbe: 'zigbee.0.lampe.farbe' } });
         const rechte = await g.naechste();
-        expect(rechte.datenpunkte.map((d: Record<string, string>) => d.id)).to.deep.equal([
-            'zigbee.0.lampe.farbe',
-            'zigbee.0.lampe.helligkeit',
-            'zigbee.0.lampe.state',
-            'zigbee.0.tuer.offen',
-        ]);
+        expect(
+            rechte.karten.map((k: { id: string; teile: Record<string, unknown> }) => [k.id, Object.keys(k.teile)]),
+        ).to.deep.equal([['lampe', ['schalten', 'helligkeit', 'farbe']]]);
         u.quelle.datenpunkt('anderer.0.wert', { type: 'number' }).raum('kueche', 'Küche', ['anderer.0']);
         await pause(150);
         expect(await g.alle()).to.deep.equal([]);
@@ -676,14 +705,14 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         u.quelle.profil('gast', {
             name: 'Gast',
             raeume: [],
-            freigaben: [{ id: 'zigbee.0.tuer.offen', recht: 'lesen' }],
-            sperren: [],
+            karten: [{ id: 'tuer', recht: 'lesen' }],
+            gesperrt: [],
         });
         await u.ablage.aendere(appId, { profil: 'gast' });
         u.quelle.app(appId, u.ablage.apps.get(appId));
         const rechte = await g.naechste();
         expect(rechte).to.include({ t: 'rechte', profil: 'Gast' });
-        expect(rechte.datenpunkte.map((d: Record<string, string>) => d.id)).to.deep.equal(['zigbee.0.tuer.offen']);
+        expect(rechte.karten.map((k: { id: string }) => k.id)).to.deep.equal(['tuer']);
         expect(rechte.raeume).to.deep.equal([]);
         g.schliesse();
     });
@@ -693,33 +722,19 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         u.quelle.objekt_('system.config', { type: 'config', common: { language: 'en' } });
         const rechte = await g.naechste();
         expect(rechte.raeume[0]).to.include({ name: 'Living room' });
-        expect(rechte.datenpunkte.find((d: Record<string, string>) => d.id === 'zigbee.0.lampe.state').name).to.equal(
-            'Lamp',
-        );
+        expect(rechte.karten[1].teile.wert1.name).to.equal('Temperature');
         g.schliesse();
     });
 
-    it('Geräte nur ab Version 2; ändert sich nur ein Gerät, merkt eine App mit Version 1 nichts', async () => {
-        const lampe = {
-            name: 'Wohnzimmerlampe',
-            typ: 'lampe' as const,
-            teile: { schalten: 'zigbee.0.lampe.state', helligkeit: 'zigbee.0.lampe.helligkeit' },
-        };
-        u.quelle.geraet('wohnzimmer', lampe);
-        const alt = await kopple();
-        expect(alt.willkommen).to.include({ v: 1 }).and.not.have.property('geraete');
-        const neu = await kopple('familie', 2);
-        expect(neu.willkommen.v).to.equal(2);
-        expect(neu.willkommen.geraete).to.deep.equal([{ id: 'wohnzimmer', ...lampe }]);
-        neu.g.schliesse();
-        const wieder = await melde(neu.appId, neu.zugang, undefined, 2);
-        expect((await wieder.naechste()).geraete).to.have.length(1);
-        u.quelle.geraet('wohnzimmer', { ...lampe, name: 'Stehlampe' });
-        expect((await wieder.naechste()).geraete[0]).to.include({ name: 'Stehlampe' });
-        await pause(150);
-        expect(await alt.g.alle()).to.deep.equal([]);
-        alt.g.schliesse();
-        wieder.schliesse();
+    it('ändert sich eine Karte, bekommt die App rechte; ein entfallenes Teil lässt sich nicht mehr setzen', async () => {
+        const { g } = await kopple();
+        u.quelle.karte('lampe', { ...LAMPE, name: 'Stehlampe', teile: { schalten: 'zigbee.0.lampe.state' } });
+        const rechte = await g.naechste();
+        expect(rechte.karten[0]).to.deep.include({ name: 'Stehlampe' });
+        expect(Object.keys(rechte.karten[0].teile)).to.deep.equal(['schalten']);
+        g.sende({ t: 'setze', n: 1, id: 'zigbee.0.lampe.helligkeit', val: 10 });
+        expect(await g.naechste()).to.deep.equal({ t: 'quittung', n: 1, ok: false, fehler: 'rechte' });
+        g.schliesse();
     });
 
     it('trennt mit 4008, wenn die App entfernt wird oder ihr Zugang sich ändert', async () => {

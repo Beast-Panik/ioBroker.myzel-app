@@ -2,7 +2,10 @@ import * as utils from '@iobroker/adapter-core';
 import gemeinsam from '../protokoll/v1/gemeinsam.schema.json';
 import { type Betrieb, Geraete, Verwaltung, adminOffen } from './admin/geraete';
 import { Katalog } from './app/katalog';
+import { type Option, kartenoptionen, liesKonfiguration, raumoptionen } from './app/konfiguration';
 import { IoBrokerAblage, IoBrokerQuelle } from './app/objekte';
+import { kartenmaengel } from './app/rechte';
+import { stelleUm } from './app/umstellung';
 import { type Server, starteServer } from './app/server';
 import { neueAdapterId } from './basis/kodierung';
 import { erstellePruefer } from './basis/schema';
@@ -11,6 +14,8 @@ import { pruefeEinstellungen } from './einstellungen';
 import { automatischeAdressen } from './zugang/heimnetz';
 
 const IDENTITAET = 'identitaet';
+// Eine Instanz aus der Zeit vor Karten in den Einstellungen hat die Felder noch nicht
+const liste = (w: unknown): unknown[] => (Array.isArray(w) ? w : []);
 const pruefeAdapterId = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/adapterId` }, [gemeinsam]);
 
 class MyzelApp extends utils.Adapter {
@@ -27,6 +32,7 @@ class MyzelApp extends utils.Adapter {
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', (id, state) => this.server?.geaendert(id, state));
         this.on('objectChange', (id, objekt) => this.katalog?.geaendert(id, objekt));
+        this.on('message', obj => void this.beantworte(obj));
         this.on('unload', this.onUnload.bind(this));
     }
 
@@ -60,11 +66,27 @@ class MyzelApp extends utils.Adapter {
         const ablage = new IoBrokerAblage(this);
         const adressen = (): string[] =>
             this.config.adressen.length > 0 ? this.config.adressen : automatischeAdressen(this.config.port);
+        const neu = await stelleUm(this.namespace, quelle, this.config, ablage, this.log).catch((fehler: Error) => {
+            this.log.error(`Umstellung auf Karten in den Einstellungen: ${fehler.message}`);
+            return { karten: [], profile: [] };
+        });
         const katalog = new Katalog(this.namespace, this.log, quelle);
+        katalog.konfiguriere(
+            liesKonfiguration(
+                {
+                    karten: [...liste(this.config.karten), ...neu.karten],
+                    profile: [...liste(this.config.profile), ...neu.profile],
+                },
+                this.log,
+            ),
+        );
         this.katalog = katalog;
         await this.subscribeForeignObjectsAsync('*');
         await katalog.lade();
         this.log.info(`${katalog.anzahl} Datenpunkte im Katalog`);
+        for (const mangel of kartenmaengel(katalog)) {
+            this.log.warn(mangel);
+        }
         const server = await starteServer({
             adapterId: identitaet.adapterId,
             namespace: this.namespace,
@@ -101,6 +123,26 @@ class MyzelApp extends utils.Adapter {
         if (offen.length > 0) {
             this.log.warn(adminOffen(offen).de);
         }
+    }
+
+    // Auswahllisten der Reiter Karten und Profile in den Instanzeinstellungen (admin/jsonConfig.json). Räume direkt aus
+    // ioBroker, damit die Listen auch gehen, wenn der Server nicht läuft.
+    private async beantworte(obj: ioBroker.Message): Promise<void> {
+        if (!obj?.callback || (obj.command !== 'raeume' && obj.command !== 'karten')) {
+            return;
+        }
+        let antwort: Option[] = [];
+        try {
+            const objekte = await this.getForeignObjectsAsync('enum.rooms.*', 'enum');
+            const raeume = Object.values(objekte).map(o => ({ id: o._id, name: o.common?.name, mitglieder: [] }));
+            antwort =
+                obj.command === 'raeume'
+                    ? raumoptionen(raeume)
+                    : kartenoptionen((obj.message as { karten?: unknown } | null)?.karten, raeume);
+        } catch (fehler) {
+            this.log.warn(`Auswahl ${obj.command} für die Einstellungen: ${(fehler as Error).message}`);
+        }
+        this.sendTo(obj.from, obj.command, antwort, obj.callback);
     }
 
     private async adminOhneAnmeldung(): Promise<string[]> {

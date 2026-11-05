@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "news": {
+            "0.2.0": {
+                "en": "Cards instead of datapoints: lamps, switches, measurements with up to four values and thermostats with a room, in their own Cards tab of the instance settings; profiles in their own tab release rooms and single cards; the device manager shows only apps; apps get only finished cards with protocol 3; devices and profiles move into the instance settings on the first start",
+                "de": "Karten statt Datenpunkte: Lampen, Schalter, Messwerte mit bis zu vier Werten und Thermostate mit Raum, im eigenen Reiter Karten der Instanzeinstellungen; Profile im eigenen Reiter geben Räume und einzelne Karten frei; der Gerätemanager zeigt nur Apps; Apps bekommen nur fertige Karten mit Protokoll 3; Geräte und Profile kommen beim ersten Start in die Instanzeinstellungen"
+            },
             "0.1.0": {
                 "en": "Devices as tiles: create lamps in the device manager from on and off, brightness, RGB colour and colour temperature; protocol 2 sends them to the app, apps with protocol 1 keep seeing single datapoints",
                 "de": "Geräte als Kacheln: Lampen im Gerätemanager aus An und aus, Helligkeit, Farbe RGB und Lichtfarbe anlegen; Protokoll 2 schickt sie an die App, Apps mit Protokoll 1 sehen weiter einzelne Datenpunkte"
@@ -85,14 +89,17 @@
             {
                 "admin": ">=8.0.11"
             }
-        ]
+        ],
+        "messagebox": true
     },
     "native": {
         "port": 8095,
         "adressen": [],
         "nachlaufMin": 5,
         "hinweisFristMin": 60,
-        "textLaenge": 1000
+        "textLaenge": 1000,
+        "karten": [],
+        "profile": []
     },
     "objects": [],
     "instanceObjects": [

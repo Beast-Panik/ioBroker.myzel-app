@@ -3,7 +3,6 @@
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SPALTEN } from './admin/geraete';
 
 const wurzel = join(__dirname, '..');
 const json = (datei: string): any => JSON.parse(readFileSync(join(wurzel, datei), 'utf8'));
@@ -32,31 +31,41 @@ describe('Paket', () => {
     });
 
     // Der Schlüssel liegt im Objekt identitaet: Eine veraltete Admin-Seite würde ihn in den Einstellungen überschreiben.
-    it('hält keine Schlüssel in den Instanz-Einstellungen', () => {
+    it('hält keine Schlüssel in den Instanz-Einstellungen, dafür Karten und Profile', () => {
         expect(Object.keys(ioPaket.native)).to.have.members([
             'port',
             'adressen',
             'nachlaufMin',
             'hinweisFristMin',
             'textLaenge',
+            'karten',
+            'profile',
         ]);
+        expect(ioPaket.native.karten).to.deep.equal([]);
+        expect(ioPaket.native.profile).to.deep.equal([]);
     });
 
     it('läuft in einem eigenen Prozess', () => {
         expect(ioPaket.common.compact).to.equal(false);
     });
 
-    it('hat für jeden Text der Einstellungsseite und jeden Spaltentitel im Gerätemanager eine deutsche und eine englische Übersetzung', () => {
-        const seite = json('admin/jsonConfig.json');
+    it('hat für jeden Text der Einstellungsseite eine deutsche und eine englische Übersetzung, in allen Reitern', () => {
         const schluessel = new Set<string>();
-        for (const element of Object.values<Record<string, unknown>>(seite.items)) {
-            for (const feld of ['text', 'label', 'help', 'unit']) {
-                if (typeof element[feld] === 'string') {
-                    schluessel.add(element[feld]);
+        // items steht als Liste (Akkordeon) oder als Objekt nach Namen (Reiter, Panel)
+        const kinder = (w: unknown): unknown[] =>
+            Array.isArray(w) ? w : w && typeof w === 'object' ? Object.values(w) : [];
+        const sammle = (element: unknown): void => {
+            if (element && typeof element === 'object') {
+                const e = element as Record<string, unknown>;
+                for (const feld of ['text', 'label', 'help', 'unit', 'validatorErrorText']) {
+                    if (typeof e[feld] === 'string') {
+                        schluessel.add(e[feld]);
+                    }
                 }
+                [...kinder(e.items), ...kinder(e.options)].forEach(sammle);
             }
-        }
-        Object.values(SPALTEN).forEach(s => schluessel.add(s));
+        };
+        sammle(json('admin/jsonConfig.json'));
         for (const sprache of ['de', 'en']) {
             const texte = json(`admin/i18n/${sprache}.json`);
             for (const s of schluessel) {

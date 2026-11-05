@@ -232,7 +232,7 @@ class Dienst {
       v: version,
       adapter: this.o.adapterId,
       adressen,
-      ...rechte.inhaltFuer(version),
+      ...rechte.inhalt,
       handydaten: daten.handydaten
     });
     this.o.log.info(`App ${appId} verbunden \xFCber ${v.herkunft.weg} von ${v.herkunft.adresse}`);
@@ -259,7 +259,7 @@ class Dienst {
       if (this.beendet || this.sitzungen.get(appId) !== angemeldet) {
         continue;
       }
-      const { sitzung, werte, handy, version } = angemeldet;
+      const { sitzung, werte, handy } = angemeldet;
       if ((daten == null ? void 0 : daten.zugangHash) !== angemeldet.zugangHash) {
         this.o.log.info(`App ${appId} entfernt oder Zugang ge\xE4ndert, Verbindung beendet`);
         sitzung.verbindung.schliesse(import_kern.SCHLIESSCODE.entfernt, "entfernt");
@@ -267,7 +267,7 @@ class Dienst {
       }
       const rechte = (_a = jeProfil.get(daten.profil)) != null ? _a : (0, import_rechte.rechteFuer)(daten.profil, this.o.katalog);
       jeProfil.set(daten.profil, rechte);
-      const rechteNeu = !(0, import_node_util.isDeepStrictEqual)(rechte.inhaltFuer(version), werte.rechte.inhaltFuer(version));
+      const rechteNeu = !(0, import_node_util.isDeepStrictEqual)(rechte.inhalt, werte.rechte.inhalt);
       if (!rechteNeu && (0, import_node_util.isDeepStrictEqual)(daten.handydaten, handy.handydaten)) {
         continue;
       }
@@ -275,8 +275,8 @@ class Dienst {
         werte.neueRechte(rechte).catch((fehler) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
       }
       handy.handydaten = daten.handydaten;
-      sitzung.verbindung.sende({ t: "rechte", ...rechte.inhaltFuer(version), handydaten: daten.handydaten });
-      this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.datenpunkte.length} Datenpunkte`);
+      sitzung.verbindung.sende({ t: "rechte", ...rechte.inhalt, handydaten: daten.handydaten });
+      this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
     }
   }
   getrennt(sitzung) {

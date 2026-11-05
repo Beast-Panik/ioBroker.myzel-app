@@ -19,7 +19,7 @@ Optionen:
   --name <name>       Gerätename beim Koppeln, Vorgabe "App-Simulator"
   --bestaetigen       jeden Hinweis sofort mit angezeigt bestätigen
   --dauer <s>         nach so vielen Sekunden beenden
-  --version <n>       Protokollversion, Vorgabe ${NEUESTE_VERSION}; erst ab 2 schickt der Adapter Geräte
+  --version <n>       Protokollversion, Vorgabe ${NEUESTE_VERSION}
 
 Befehle, je Zeile (Text mit Leerzeichen in "..."):
   abo <id> ...                  setze <id> <wert als JSON oder Text>

@@ -28,18 +28,20 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var rechte_exports = {};
 __export(rechte_exports, {
-  GERAETE_HOECHSTENS: () => GERAETE_HOECHSTENS,
+  BEZEICHNUNG_LAENGE: () => BEZEICHNUNG_LAENGE,
+  KARTENARTEN: () => KARTENARTEN,
+  KARTENTYPEN: () => KARTENTYPEN,
+  KARTEN_HOECHSTENS: () => KARTEN_HOECHSTENS,
+  NAME_LAENGE: () => NAME_LAENGE,
   Rechtestand: () => Rechtestand,
-  TEILE: () => TEILE,
-  TEILTYP: () => TEILTYP,
-  alsGeraet: () => alsGeraet,
+  alsKarte: () => alsKarte,
   alsProfil: () => alsProfil,
   berechneRechte: () => berechneRechte,
-  beschreibe: () => beschreibe,
+  bereich: () => bereich,
   istKennung: () => istKennung,
+  kartenmaengel: () => kartenmaengel,
   liegtUnter: () => liegtUnter,
   merkmale: () => merkmale,
-  passtZuTeil: () => passtZuTeil,
   rechteFuer: () => rechteFuer,
   text: () => text
 });
@@ -47,15 +49,37 @@ module.exports = __toCommonJS(rechte_exports);
 var import_adapter_an_app_schema = __toESM(require("../../protokoll/v1/adapter-an-app.schema.json"));
 var import_gemeinsam_schema = __toESM(require("../../protokoll/v1/gemeinsam.schema.json"));
 var import_schema = require("../basis/schema");
-const TEILTYP = {
-  schalten: "boolean",
-  helligkeit: "number",
-  farbe: "string",
-  farbtemperatur: "number"
+const AN_AUS = { typen: ["boolean"], bedienbar: true };
+const ANZEIGE = { typen: ["number", "string", "boolean"], bedienbar: false };
+const KARTENARTEN = {
+  lampe: {
+    teile: {
+      schalten: AN_AUS,
+      helligkeit: { typen: ["number"], bedienbar: true, bereich: { min: 0, max: 100 } },
+      farbe: { typen: ["string"], bedienbar: true },
+      farbtemperatur: { typen: ["number"], bedienbar: true, bereich: "pflicht" }
+    },
+    pflicht: []
+  },
+  schalter: { teile: { schalten: AN_AUS }, pflicht: ["schalten"] },
+  messwert: {
+    teile: { wert1: ANZEIGE, wert2: ANZEIGE, wert3: ANZEIGE, wert4: ANZEIGE },
+    pflicht: [],
+    bezeichnungen: true
+  },
+  thermostat: {
+    teile: {
+      soll: { typen: ["number"], bedienbar: true, bereich: { min: 5, max: 30 }, schritt: 0.5 },
+      ist: { typen: ["number"], bedienbar: false }
+    },
+    pflicht: ["soll"]
+  }
 };
-const TEILE = Object.keys(TEILTYP);
-const GERAETE_HOECHSTENS = import_adapter_an_app_schema.default.$defs.rechteInhalt.properties.geraete.maxItems;
-const MERKMALE = ["name", "type", "role", "unit", "min", "max", "step", "states", "write"];
+const KARTENTYPEN = Object.keys(KARTENARTEN);
+const KARTEN_HOECHSTENS = import_adapter_an_app_schema.default.$defs.rechteInhalt.properties.karten.maxItems;
+const NAME_LAENGE = 200;
+const BEZEICHNUNG_LAENGE = 60;
+const MERKMALE = ["name", "type", "unit", "min", "max", "step", "states", "write"];
 function aliasziele(alias) {
   const id = alias == null ? void 0 : alias.id;
   const ziele = id && typeof id === "object" ? [id.read, id.write] : [id];
@@ -68,68 +92,104 @@ function merkmale(id, common, sprache) {
   const ziele = aliasziele(common == null ? void 0 : common.alias);
   return { ...felder, name: text(common == null ? void 0 : common.name, sprache, id), ...ziele.length > 0 ? { ziele } : {} };
 }
-const TYPEN = /* @__PURE__ */ new Set(["number", "string", "boolean", "json", "mixed", "array", "object", "file"]);
 const RANG = { lesen: 1, schreiben: 2 };
 const FEST_GESPERRT = ["system"];
+const hoeher = (a, b) => a && RANG[a] >= RANG[b] ? a : b;
 const pruefeObjektId = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/objektId` }, [import_gemeinsam_schema.default]);
-const pruefeProfil = (0, import_schema.erstellePruefer)({
-  type: "object",
-  required: ["name", "raeume", "freigaben", "sperren"],
-  properties: {
-    name: { type: "string", minLength: 1, maxLength: 60 },
-    raeume: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["enum", "recht"],
-        properties: {
-          enum: { type: "string", pattern: "^enum\\.rooms\\." },
-          recht: { enum: ["lesen", "schreiben"] }
+const kennung = { $ref: `${import_gemeinsam_schema.default.$id}#/$defs/kennung` };
+const rechtwahl = { enum: ["lesen", "schreiben"] };
+const pruefeProfil = (0, import_schema.erstellePruefer)(
+  {
+    type: "object",
+    required: ["name", "raeume", "karten", "gesperrt"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 60 },
+      raeume: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["enum", "recht"],
+          properties: { enum: { type: "string", pattern: "^enum\\.rooms\\." }, recht: rechtwahl }
         }
-      }
-    },
-    freigaben: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["id", "recht"],
-        properties: { id: { type: "string", minLength: 1 }, recht: { enum: ["lesen", "schreiben"] } }
-      }
-    },
-    sperren: { type: "array", items: { type: "string", minLength: 1 } }
-  }
-});
+      },
+      karten: {
+        type: "array",
+        items: { type: "object", required: ["id", "recht"], properties: { id: kennung, recht: rechtwahl } }
+      },
+      gesperrt: { type: "array", items: kennung }
+    }
+  },
+  [import_gemeinsam_schema.default]
+);
 function alsProfil(native) {
   const fehler = pruefeProfil(native);
   return fehler.length > 0 ? fehler : native;
 }
-const geraetFeld = (feld) => ({ $ref: `${import_adapter_an_app_schema.default.$id}#/$defs/geraet/properties/${feld}` });
-const pruefeGeraet = (0, import_schema.erstellePruefer)(
+const pruefeKarte = (0, import_schema.erstellePruefer)(
   {
     type: "object",
-    required: ["name", "typ", "teile"],
+    required: ["name", "typ", "raum", "teile"],
     properties: {
-      name: { type: "string", minLength: 1, maxLength: 200 },
-      typ: geraetFeld("typ"),
-      teile: geraetFeld("teile")
-    }
+      name: { type: "string", minLength: 1, maxLength: NAME_LAENGE },
+      typ: { enum: KARTENTYPEN },
+      raum: {
+        anyOf: [
+          { const: "" },
+          {
+            allOf: [
+              { $ref: `${import_gemeinsam_schema.default.$id}#/$defs/objektId` },
+              { type: "string", pattern: "^enum\\.rooms\\." }
+            ]
+          }
+        ]
+      }
+    },
+    oneOf: KARTENTYPEN.map((typ) => {
+      const art = KARTENARTEN[typ];
+      const je = (schema) => Object.fromEntries(Object.keys(art.teile).map((teil) => [teil, schema]));
+      return {
+        type: "object",
+        properties: {
+          typ: { const: typ },
+          teile: {
+            type: "object",
+            additionalProperties: false,
+            minProperties: 1,
+            required: art.pflicht,
+            properties: je({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/objektId` })
+          },
+          bezeichnungen: art.bezeichnungen ? {
+            type: "object",
+            additionalProperties: false,
+            properties: je({ type: "string", maxLength: BEZEICHNUNG_LAENGE })
+          } : false
+        }
+      };
+    })
   },
-  [import_gemeinsam_schema.default, import_adapter_an_app_schema.default]
+  [import_gemeinsam_schema.default]
 );
-function alsGeraet(native) {
-  const fehler = pruefeGeraet(native);
+function alsKarte(native) {
+  const fehler = pruefeKarte(native);
   return fehler.length > 0 ? fehler : native;
 }
-const pruefeKennung = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/kennung` }, [import_gemeinsam_schema.default]);
+const pruefeKennung = (0, import_schema.erstellePruefer)(kennung, [import_gemeinsam_schema.default]);
 const istKennung = (id) => pruefeKennung(id).length === 0;
 const zahl = (w) => typeof w === "number" && Number.isFinite(w) ? w : void 0;
-function passtZuTeil(teil, typ, min, max) {
-  if (typ !== TEILTYP[teil]) {
-    return false;
+function bereich(art, m) {
+  var _a, _b, _c;
+  if (!art.bereich) {
+    return void 0;
   }
-  const von = zahl(min);
-  const bis = zahl(max);
-  return teil !== "farbtemperatur" || von !== void 0 && bis !== void 0 && von < bis;
+  const vorgabe = art.bereich === "pflicht" ? void 0 : art.bereich;
+  const min = (_a = zahl(m.min)) != null ? _a : vorgabe == null ? void 0 : vorgabe.min;
+  const max = (_b = zahl(m.max)) != null ? _b : vorgabe == null ? void 0 : vorgabe.max;
+  if (min === void 0 || max === void 0 || min >= max) {
+    return void 0;
+  }
+  const eigener = zahl(m.step);
+  const schritt = eigener !== void 0 && eigener > 0 ? eigener : (_c = art.schritt) != null ? _c : max - min >= 10 ? 1 : void 0;
+  return { min, max, ...schritt !== void 0 ? { schritt } : {} };
 }
 function text(name, sprache, ersatz) {
   var _a, _b;
@@ -152,47 +212,85 @@ function auswahl(states) {
   return ergebnis.length > 0 ? Object.fromEntries(ergebnis) : void 0;
 }
 const kurz = (w, laenge) => typeof w === "string" && w !== "" ? w.slice(0, laenge) : void 0;
-function beschreibe(id, common, recht, sprache) {
+function beschreibe(id, m, art, recht, name) {
+  const regler = bereich(art, m);
   const felder = {
-    rolle: kurz(common.role, 100),
-    einheit: kurz(common.unit, 30),
-    min: zahl(common.min),
-    max: zahl(common.max),
-    schritt: zahl(common.step),
-    auswahl: auswahl(common.states)
+    einheit: kurz(m.unit, 30),
+    min: regler == null ? void 0 : regler.min,
+    max: regler == null ? void 0 : regler.max,
+    schritt: regler == null ? void 0 : regler.schritt,
+    // Text zu einem Wert braucht nur, was angezeigt wird
+    auswahl: art.bedienbar ? void 0 : auswahl(m.states),
+    name: name == null ? void 0 : name.slice(0, NAME_LAENGE)
   };
   return {
     id,
-    name: text(common.name, sprache, id).slice(0, 200),
-    typ: common.type && TYPEN.has(common.type) ? common.type : "mixed",
+    typ: m.type,
     ...Object.fromEntries(Object.entries(felder).filter(([, w]) => w !== void 0)),
     recht
   };
 }
 const liegtUnter = (id, praefix) => id === praefix || id.startsWith(`${praefix}.`);
-const gesperrt = (id, m, sperren) => {
+const betrifft = (id, m, praefixe) => {
   var _a;
-  return [id, ...(_a = m.ziele) != null ? _a : []].some((i) => sperren.some((s) => liegtUnter(i, s)));
+  return [id, ...(_a = m == null ? void 0 : m.ziele) != null ? _a : []].some((i) => praefixe.some((p) => liegtUnter(i, p)));
 };
+function teilmangel(dp, m, art) {
+  if (pruefeObjektId(dp).length > 0) {
+    return "ID ung\xFCltig";
+  }
+  if (!m) {
+    return "Datenpunkt fehlt";
+  }
+  if (betrifft(dp, m, FEST_GESPERRT)) {
+    return "unter system, nie freigegeben";
+  }
+  if (!art.typen.includes(m.type)) {
+    return `Typ ${String(m.type)} statt ${art.typen.join(" oder ")}`;
+  }
+  if (art.bereich && bereich(art, m) === void 0) {
+    return "min und max fehlen oder passen nicht";
+  }
+  return void 0;
+}
+function kartenmaengel(quelle) {
+  const maengel = [];
+  for (const [id, karte] of quelle.karten()) {
+    const art = KARTENARTEN[karte.typ];
+    const teile = Object.entries(karte.teile).map(([teil, dp]) => ({
+      teil,
+      dp,
+      mangel: teilmangel(dp, quelle.datenpunkt(dp), art.teile[teil])
+    }));
+    const schlecht = teile.filter((t) => t.mangel !== void 0);
+    if (schlecht.length === 0) {
+      continue;
+    }
+    const bleiben = teile.filter((t) => t.mangel === void 0).map((t) => t.teil);
+    const folge = bleiben.length === 0 || art.pflicht.some((p) => !bleiben.includes(p)) ? "fehlt auf den Handys" : "zeigt nicht alle Teile";
+    const liste = schlecht.map((t) => `${t.teil} ${t.dp}: ${t.mangel}`).join("; ");
+    maengel.push(`Karte \u201E${karte.name}\u201C (${id}) ${folge}: ${liste}`);
+  }
+  return maengel;
+}
 class Rechtestand {
   constructor(inhalt) {
     this.inhalt = inhalt;
-    this.rechte = new Map(inhalt.datenpunkte.map((d) => [d.id, d.recht]));
+    for (const karte of inhalt.karten) {
+      for (const t of Object.values(karte.teile)) {
+        this.rechte.set(t.id, hoeher(this.rechte.get(t.id), t.recht));
+      }
+    }
   }
-  rechte;
+  rechte = /* @__PURE__ */ new Map();
   recht(id) {
     return this.rechte.get(id);
   }
-  // Geräte erst ab Version 2: Eine App mit Version 1 trennt bei einem unbekannten Feld.
-  inhaltFuer(version) {
-    if (version >= 2) {
-      return this.inhalt;
-    }
-    const { geraete: _, ...ohneGeraete } = this.inhalt;
-    return ohneGeraete;
+  get anzahlDatenpunkte() {
+    return this.rechte.size;
   }
   static leer() {
-    return new Rechtestand({ profil: "", datenpunkte: [], raeume: [], funktionen: [], geraete: [] });
+    return new Rechtestand({ profil: "", raeume: [], karten: [] });
   }
 }
 function rechteFuer(profilId, quelle) {
@@ -200,92 +298,73 @@ function rechteFuer(profilId, quelle) {
   return profil ? berechneRechte(profil, quelle) : Rechtestand.leer();
 }
 function berechneRechte(profil, quelle) {
-  var _a, _b;
-  const { sprache } = quelle;
-  const rechte = /* @__PURE__ */ new Map();
-  const objekte = /* @__PURE__ */ new Map();
-  const raeume = quelle.aufzaehlungen("rooms");
-  const funktionen = quelle.aufzaehlungen("functions");
-  for (const { enum: raumId, recht } of profil.raeume) {
-    for (const mitglied of (_b = (_a = raeume.find((r) => r.id === raumId)) == null ? void 0 : _a.mitglieder) != null ? _b : []) {
-      for (const [id, common] of quelle.zustaende(mitglied)) {
-        if (gesperrt(id, common, [quelle.eigeneApps])) {
-          continue;
-        }
-        objekte.set(id, common);
-        const bisher = rechte.get(id);
-        if (!bisher || RANG[recht] > RANG[bisher]) {
-          rechte.set(id, recht);
-        }
-      }
+  var _a;
+  const raumrecht = /* @__PURE__ */ new Map();
+  profil.raeume.forEach((r) => raumrecht.set(r.enum, hoeher(raumrecht.get(r.enum), r.recht)));
+  const einzeln = /* @__PURE__ */ new Map();
+  profil.karten.forEach((k) => einzeln.set(k.id, hoeher(einzeln.get(k.id), k.recht)));
+  const gesperrt = new Set(profil.gesperrt);
+  const raeume = new Map(quelle.raeume().map((r) => [r.id, r]));
+  const karten = [];
+  for (const [id, karte] of quelle.karten()) {
+    if (karten.length >= KARTEN_HOECHSTENS) {
+      break;
     }
-  }
-  for (const { id, recht } of profil.freigaben) {
-    const common = quelle.zustaende(id).get(id);
-    if (common) {
-      objekte.set(id, common);
-      rechte.set(id, recht);
-    }
-  }
-  const datenpunkte = [];
-  for (const [id, recht] of rechte) {
-    const common = objekte.get(id);
-    if (gesperrt(id, common, [...profil.sperren, ...FEST_GESPERRT]) || pruefeObjektId(id).length > 0) {
+    if (gesperrt.has(id)) {
       continue;
     }
-    datenpunkte.push(beschreibe(id, common, common.write === false ? "lesen" : recht, sprache));
+    const raum = raeume.has(karte.raum) ? karte.raum : void 0;
+    const persoenlich = Object.values(karte.teile).some(
+      (dp) => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps])
+    );
+    const recht = (_a = einzeln.get(id)) != null ? _a : raum && !persoenlich ? raumrecht.get(raum) : void 0;
+    const eintrag = recht && kartenEintrag(id, karte, recht, raum, quelle);
+    if (eintrag) {
+      karten.push(eintrag);
+    }
   }
-  datenpunkte.sort((a, b) => a.id.localeCompare(b.id));
-  const gruppiere = (liste) => liste.map((a) => ({
-    id: a.id,
-    name: text(a.name, sprache, a.id).slice(0, 200),
-    mitglieder: datenpunkte.filter((d) => a.mitglieder.some((m) => liegtUnter(d.id, m))).map((d) => d.id)
-  })).filter((g) => g.mitglieder.length > 0 && pruefeObjektId(g.id).length === 0);
+  const sichtbar = new Set(karten.map((k) => k.raum));
   return new Rechtestand({
     profil: profil.name,
-    datenpunkte,
-    raeume: gruppiere(raeume),
-    funktionen: gruppiere(funktionen),
-    geraete: geraeteAus(datenpunkte, quelle)
+    raeume: [...raeume.values()].filter((r) => sichtbar.has(r.id) && pruefeObjektId(r.id).length === 0).map((r) => ({ id: r.id, name: text(r.name, quelle.sprache, r.id).slice(0, NAME_LAENGE) })),
+    karten
   });
 }
-function geraeteAus(datenpunkte, quelle) {
-  const erlaubt = new Map(datenpunkte.map((d) => [d.id, d]));
-  const vergeben = /* @__PURE__ */ new Set();
-  const geraete = [];
-  for (const [id, geraet] of quelle.geraete()) {
-    const teile = {};
-    for (const teil of TEILE) {
-      const dpId = geraet.teile[teil];
-      if (dpId === void 0 || vergeben.has(dpId)) {
-        continue;
-      }
-      vergeben.add(dpId);
-      const d = erlaubt.get(dpId);
-      if (d && passtZuTeil(teil, d.typ, d.min, d.max)) {
-        teile[teil] = dpId;
-      }
+function kartenEintrag(id, karte, recht, raum, quelle) {
+  var _a;
+  const art = KARTENARTEN[karte.typ];
+  const teile = {};
+  for (const [teil, teilart] of Object.entries(art.teile)) {
+    const dp = karte.teile[teil];
+    const m = dp === void 0 ? void 0 : quelle.datenpunkt(dp);
+    if (dp === void 0 || !m || teilmangel(dp, m, teilart) !== void 0) {
+      continue;
     }
-    if (Object.keys(teile).length > 0 && geraete.length < GERAETE_HOECHSTENS) {
-      geraete.push({ id, name: geraet.name, typ: geraet.typ, teile });
-    }
+    const teilrecht = recht === "schreiben" && teilart.bedienbar && m.write !== false ? "schreiben" : "lesen";
+    const name = art.bezeichnungen ? ((_a = karte.bezeichnungen) == null ? void 0 : _a[teil]) || text(m.name, quelle.sprache, dp) : void 0;
+    teile[teil] = beschreibe(dp, m, teilart, teilrecht, name);
   }
-  return geraete;
+  if (Object.keys(teile).length === 0 || art.pflicht.some((p) => !teile[p])) {
+    return void 0;
+  }
+  return { id, name: karte.name.slice(0, NAME_LAENGE), typ: karte.typ, ...raum ? { raum } : {}, teile };
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  GERAETE_HOECHSTENS,
+  BEZEICHNUNG_LAENGE,
+  KARTENARTEN,
+  KARTENTYPEN,
+  KARTEN_HOECHSTENS,
+  NAME_LAENGE,
   Rechtestand,
-  TEILE,
-  TEILTYP,
-  alsGeraet,
+  alsKarte,
   alsProfil,
   berechneRechte,
-  beschreibe,
+  bereich,
   istKennung,
+  kartenmaengel,
   liegtUnter,
   merkmale,
-  passtZuTeil,
   rechteFuer,
   text
 });

@@ -17,8 +17,8 @@ describe('Nachrichtenpruefer', () => {
     });
 
     it('prüft die Version bei hallo und koppeln vor dem Schema', () => {
-        expect(lies({ t: 'hallo', v: 3 })).to.deep.equal({ art: 'version', v: 3 });
-        expect(lies({ t: 'koppeln', v: 3, geheimnis: 'x' })).to.deep.equal({ art: 'version', v: 3 });
+        expect(lies({ t: 'hallo', v: 4 })).to.deep.equal({ art: 'version', v: 4 });
+        expect(lies({ t: 'koppeln', v: 2, geheimnis: 'x' })).to.deep.equal({ art: 'version', v: 2 });
         expect(lies({ t: 'hallo', v: '2' }).art).to.equal('ungueltig');
         expect(lies({ t: 'abo', ids: [], v: 2 }).art).to.equal('ungueltig');
     });
@@ -33,7 +33,7 @@ describe('Nachrichtenpruefer', () => {
         ['Nachricht der Gegenrichtung', '{"t":"willkommen"}'],
         [
             'unbekanntes Feld',
-            JSON.stringify({ t: 'hallo', v: 1, app: 'abcdefgh', zugang: 'A'.repeat(43), geraet, x: 1 }),
+            JSON.stringify({ t: 'hallo', v: 3, app: 'abcdefgh', zugang: 'A'.repeat(43), geraet, x: 1 }),
         ],
     ];
     for (const [fall, text] of ungueltig) {

@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import type { Protokoll } from '../basis/grenzen';
 import { Katalog, type Katalogquelle, type Objektaenderung } from './katalog';
+import type { Karte, Profil } from './rechte';
 
 const NAMESPACE = 'myzel-app.0';
 
@@ -8,8 +9,8 @@ const objekt = (id: string, type: string, common: Record<string, unknown> = {}, 
     ({ _id: id, type, common, native }) as unknown as ioBroker.Object;
 const zustand = (id: string, common: Record<string, unknown> = {}): ioBroker.Object =>
     objekt(id, 'state', { name: id, type: 'number', role: 'value', read: true, write: true, ...common });
-const profil = { name: 'Familie', raeume: [], freigaben: [], sperren: [] };
-const lampe = { name: 'Lampe', typ: 'lampe', teile: { schalten: 'a.b.c' } };
+const profil: Profil = { name: 'Familie', raeume: [], karten: [], gesperrt: [] };
+const lampe: Karte = { name: 'Lampe', typ: 'lampe', raum: '', teile: { schalten: 'a.b.c' } };
 
 const quelleAus = (objekte: ioBroker.Object[], abfragen: string[] = []): Katalogquelle => ({
     objekte(typ, praefix) {
@@ -37,9 +38,9 @@ function umgebung(quelle: Katalogquelle = quelleAus([])): {
 }
 
 describe('Katalog', () => {
-    it('lädt Datenpunkte, Räume, Funktionen, Profile, Geräte und Systemsprache mit fünf Abfragen', async () => {
+    it('lädt Datenpunkte, Räume und Systemsprache mit drei Abfragen; Objekte für Karten und Profile zählen nicht', async () => {
         const abfragen: string[] = [];
-        const { katalog, warnungen } = umgebung(
+        const { katalog } = umgebung(
             quelleAus(
                 [
                     zustand('a.b'),
@@ -51,37 +52,24 @@ describe('Katalog', () => {
                     objekt('enum.functions.licht', 'enum', { name: 'Licht', members: ['a.b.c'] }),
                     objekt('enum.members.x', 'enum', { name: 'x', members: ['a.b'] }),
                     objekt(`${NAMESPACE}.profile.familie`, 'config', {}, profil),
-                    objekt(`${NAMESPACE}.profile.kaputt`, 'config', {}, { name: 'x' }),
-                    objekt(`${NAMESPACE}.geraete.lampe`, 'config', {}, lampe),
-                    objekt(`${NAMESPACE}.geraete.leer`, 'config', {}, { ...lampe, teile: {} }),
-                    objekt(`${NAMESPACE}.geraete.Gross`, 'config', {}, lampe),
+                    objekt(`${NAMESPACE}.karten.lampe`, 'config', {}, lampe),
+                    objekt(`${NAMESPACE}.geraete.alt`, 'config', {}, lampe),
                     objekt('system.config', 'config', { language: 'fr' }),
                 ],
                 abfragen,
             ),
         );
         await katalog.lade();
-        expect(abfragen).to.deep.equal([
-            'config system.config',
-            'state ',
-            'enum enum.',
-            `config ${NAMESPACE}.profile.`,
-            `config ${NAMESPACE}.geraete.`,
-        ]);
+        expect(abfragen).to.deep.equal(['config system.config', 'state ', 'enum enum.rooms.']);
         expect(katalog.anzahl).to.equal(3);
-        expect([...katalog.zustaende('a.b').keys()]).to.deep.equal(['a.b', 'a.b.c']);
-        expect([...katalog.zustaende('a').keys()]).to.deep.equal(['a.b', 'a.b-c.d', 'a.b.c']);
-        expect(katalog.aufzaehlungen('rooms')).to.deep.equal([
+        expect(katalog.datenpunkt('a.b-c.d')?.type).to.equal('number');
+        expect(katalog.datenpunkt('a.b.kanal')).to.equal(undefined);
+        expect(katalog.raeume()).to.deep.equal([
             { id: 'enum.rooms.bad', name: 'Bad', mitglieder: [] },
             { id: 'enum.rooms.kueche', name: 'Küche', mitglieder: ['a.b'] },
         ]);
-        expect(katalog.aufzaehlungen('functions').map(f => f.id)).to.deep.equal(['enum.functions.licht']);
-        expect(katalog.profil('familie')).to.deep.equal(profil);
-        expect(katalog.profil('kaputt')).to.equal(undefined);
-        expect(warnungen.join('\n')).to.contain('Profil kaputt ist unbrauchbar');
-        expect(katalog.geraete()).to.deep.equal([['lampe', lampe]]);
-        expect(warnungen.join('\n')).to.contain('Gerät leer ist unbrauchbar');
-        expect(warnungen.join('\n')).to.contain('Gerät Gross ist unbrauchbar');
+        expect(katalog.profil('familie')).to.equal(undefined);
+        expect(katalog.karten()).to.deep.equal([]);
         expect(katalog.sprache).to.equal('fr');
     });
 
@@ -95,16 +83,17 @@ describe('Katalog', () => {
                 }),
         });
         const geladen = katalog.lade();
-        while (liefern.length < 5) {
+        while (liefern.length < 3) {
             await new Promise(r => setImmediate(r));
         }
         katalog.geaendert('alt.weg', null);
         katalog.geaendert('neu.da', zustand('neu.da'));
         liefern.forEach(l => l());
         await geladen;
-        expect([...katalog.zustaende('alt').keys(), ...katalog.zustaende('neu').keys()]).to.deep.equal([
-            'alt.bleibt',
-            'neu.da',
+        expect(['alt.weg', 'alt.bleibt', 'neu.da'].map(id => katalog.datenpunkt(id) !== undefined)).to.deep.equal([
+            false,
+            true,
+            true,
         ]);
         expect(meldungen()).to.equal(0);
         katalog.geaendert('neu.da', null);
@@ -120,15 +109,15 @@ describe('Katalog', () => {
         const abfragen: string[] = [];
         const { katalog, meldungen } = umgebung(quelleAus(objekte, abfragen));
         await katalog.lade();
-        expect(katalog.zustaende('a.lampe').get('a.lampe')?.name).to.equal('Lampe');
+        expect(katalog.datenpunkt('a.lampe')?.name).to.equal('Lampe');
         objekte[0] = objekt('system.config', 'config', { language: 'en' });
         katalog.geaendert('system.config', objekte[0]);
         expect(meldungen(), 'noch nicht, sonst rechte mit gemischten Sprachen').to.equal(0);
         await katalog.lade();
         expect(meldungen()).to.equal(1);
         expect(abfragen.filter(a => a.startsWith('state'))).to.have.length(3);
-        expect(katalog.zustaende('a').get('a.lampe')?.name).to.equal('Lamp');
-        expect(katalog.zustaende('a').get('a.ohne')?.name).to.equal('a.ohne');
+        expect(katalog.datenpunkt('a.lampe')?.name).to.equal('Lamp');
+        expect(katalog.datenpunkt('a.ohne')?.name).to.equal('a.ohne');
     });
 
     it('lädt beim Start nicht doppelt, wenn system.config die Sprache setzt', async () => {
@@ -151,7 +140,30 @@ describe('Katalog', () => {
         ['Raum', 'enum.rooms.neu', objekt('enum.rooms.neu', 'enum', { name: 'Neu', members: [] }), true],
         ['unbekannter Raum gelöscht', 'enum.rooms.nie', null, false],
         ['andere Aufzählung', 'enum.members.x', objekt('enum.members.x', 'enum'), false],
-        ['Profil', `${NAMESPACE}.profile.gast`, objekt(`${NAMESPACE}.profile.gast`, 'config', {}, profil), true],
+        [
+            'Funktion',
+            'enum.functions.licht',
+            objekt('enum.functions.licht', 'enum', { name: 'Licht', members: [] }),
+            false,
+        ],
+        [
+            'Kartenobjekt aus einem früheren Stand',
+            `${NAMESPACE}.karten.flur`,
+            objekt(`${NAMESPACE}.karten.flur`, 'config', {}, lampe),
+            false,
+        ],
+        [
+            'Gerät aus Adapter 0.1',
+            `${NAMESPACE}.geraete.flur`,
+            objekt(`${NAMESPACE}.geraete.flur`, 'config', {}, lampe),
+            false,
+        ],
+        [
+            'Profilobjekt aus einem früheren Stand',
+            `${NAMESPACE}.profile.gast`,
+            objekt(`${NAMESPACE}.profile.gast`, 'config', {}, profil),
+            false,
+        ],
         ['Objekt einer App', `${NAMESPACE}.apps.abcdefgh`, objekt(`${NAMESPACE}.apps.abcdefgh`, 'device'), true],
         ['gleiche Systemsprache', 'system.config', objekt('system.config', 'config', { language: 'en' }), false],
         ['leere Systemsprache wie Admin', 'system.config', objekt('system.config', 'config', { language: '' }), false],
@@ -171,25 +183,15 @@ describe('Katalog', () => {
         });
     }
 
-    it('findet neue Datenpunkte nach einer Abfrage und vergisst gelöschte', () => {
-        const { katalog } = umgebung();
-        katalog.geaendert('a.b.z', zustand('a.b.z'));
-        expect([...katalog.zustaende('a.b').keys()]).to.deep.equal(['a.b.z']);
-        katalog.geaendert('a.b.a', zustand('a.b.a'));
-        katalog.geaendert('a.b.z', null);
-        expect([...katalog.zustaende('a.b').keys()]).to.deep.equal(['a.b.a']);
-    });
-
     it('hält je Datenpunkt nur, was die Auswertung braucht', () => {
         const { katalog } = umgebung();
         katalog.geaendert(
             'a.b',
             zustand('a.b', { unit: '%', min: 0, desc: 'lang', custom: { 'history.0': {} }, smartName: 'x' }),
         );
-        expect(katalog.zustaende('a.b').get('a.b')).to.deep.equal({
+        expect(katalog.datenpunkt('a.b')).to.deep.equal({
             name: 'a.b',
             type: 'number',
-            role: 'value',
             write: true,
             unit: '%',
             min: 0,
@@ -213,7 +215,7 @@ describe('Katalog', () => {
             ]),
         );
         await katalog.lade();
-        expect(katalog.aufzaehlungen('rooms').map(r => [r.id, r.mitglieder])).to.deep.equal([
+        expect(katalog.raeume().map(r => [r.id, r.mitglieder])).to.deep.equal([
             ['enum.rooms.leer', []],
             ['enum.rooms.objekt', []],
             ['enum.rooms.text', []],
@@ -221,37 +223,27 @@ describe('Katalog', () => {
         expect(warnungen).to.deep.equal(['Objekt enum.rooms.wirft nicht übernommen: kaputt']);
         expect(() => katalog.geaendert('enum.rooms.wirft', wirft)).to.not.throw();
         katalog.geaendert('enum.rooms.text', objekt('enum.rooms.text', 'enum', { name: 'Text', members: ['a.b'] }));
-        expect(katalog.aufzaehlungen('rooms').find(r => r.id === 'enum.rooms.text')?.mitglieder).to.deep.equal(['a.b']);
+        expect(katalog.raeume().find(r => r.id === 'enum.rooms.text')?.mitglieder).to.deep.equal(['a.b']);
     });
 
-    it('verwirft unbrauchbare Profile mit Warnung, auch wenn ein gültiges unbrauchbar wird', () => {
-        const { katalog, warnungen } = umgebung();
-        katalog.geaendert(`${NAMESPACE}.profile.Gross`, objekt(`${NAMESPACE}.profile.Gross`, 'config', {}, profil));
-        expect(katalog.profil('Gross')).to.equal(undefined);
-        katalog.geaendert(`${NAMESPACE}.profile.gast`, objekt(`${NAMESPACE}.profile.gast`, 'config', {}, profil));
+    it('Karten und Profile aus den Einstellungen: nach ID sortiert, jede neue Einstellung gemeldet', () => {
+        const { katalog, meldungen } = umgebung();
+        katalog.konfiguriere({
+            karten: new Map([
+                ['flur', { ...lampe, name: 'Flur' }],
+                ['bad', lampe],
+            ]),
+            profile: new Map([['gast', profil]]),
+        });
+        expect(katalog.karten().map(([k, karte]) => [k, karte.name])).to.deep.equal([
+            ['bad', 'Lampe'],
+            ['flur', 'Flur'],
+        ]);
         expect(katalog.profil('gast')).to.deep.equal(profil);
-        katalog.geaendert(`${NAMESPACE}.profile.gast`, objekt(`${NAMESPACE}.profile.gast`, 'config', {}, {}));
+        expect(katalog.alleProfile().map(([id]) => id)).to.deep.equal(['gast']);
+        katalog.konfiguriere({ karten: new Map(), profile: new Map() });
+        expect(katalog.karten()).to.deep.equal([]);
         expect(katalog.profil('gast')).to.equal(undefined);
-        expect(warnungen).to.have.length(2);
-        katalog.geaendert(`${NAMESPACE}.profile.gast`, objekt(`${NAMESPACE}.profile.gast`, 'config', {}, profil));
-        katalog.geaendert(`${NAMESPACE}.profile.gast`, null);
-        expect(katalog.profil('gast')).to.equal(undefined);
-    });
-
-    it('führt Geräte nach, meldet jede Änderung und verwirft unbrauchbare', () => {
-        const { katalog, warnungen, meldungen } = umgebung();
-        const id = (g: string): string => `${NAMESPACE}.geraete.${g}`;
-        katalog.geaendert(id('flur'), objekt(id('flur'), 'config', {}, { ...lampe, name: 'Flur' }));
-        katalog.geaendert(id('bad'), objekt(id('bad'), 'config', {}, lampe));
-        expect(katalog.geraete().map(([g]) => g)).to.deep.equal(['bad', 'flur']);
-        expect(katalog.geraet('flur')?.name).to.equal('Flur');
-        katalog.geaendert(id('bad'), objekt(id('bad'), 'config', {}, { ...lampe, typ: 'heizung' }));
-        katalog.geaendert(id('flur'), objekt(id('flur'), 'config', {}, { ...lampe, teile: { tuer: 'a.b' } }));
-        expect(katalog.geraete()).to.deep.equal([]);
-        expect(warnungen).to.have.length(2);
-        katalog.geaendert(id('flur'), objekt(id('flur'), 'config', {}, lampe));
-        katalog.geaendert(id('flur'), null);
-        expect(katalog.geraete()).to.deep.equal([]);
-        expect(meldungen()).to.equal(6);
+        expect(meldungen()).to.equal(2);
     });
 });

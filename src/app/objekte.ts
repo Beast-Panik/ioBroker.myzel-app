@@ -2,7 +2,8 @@ import gemeinsam from '../../protokoll/v1/gemeinsam.schema.json';
 import type { Geraet } from '../basis/anmeldung';
 import { erstellePruefer } from '../basis/schema';
 import type { Katalogquelle } from './katalog';
-import type { Geraet as GeraetImHaus, Profil } from './rechte';
+import type { Zeile } from './konfiguration';
+import type { Umstellungsablage } from './umstellung';
 import type { Wert, Zustandsquelle } from './werte';
 
 export interface Handydaten {
@@ -54,16 +55,6 @@ export interface Appablage {
     richteEin(appId: string): Promise<void>;
     hinweise(appId: string): Promise<Hinweisstand>;
     legeHinweise(appId: string, stand: Hinweisstand): Promise<void>;
-}
-
-export interface Profilablage {
-    legeProfil(profilId: string, profil: Profil): Promise<void>;
-    loescheProfil(profilId: string): Promise<void>;
-}
-
-export interface Geraeteablage {
-    legeGeraet(geraetId: string, geraet: GeraetImHaus): Promise<void>;
-    loescheGeraet(geraetId: string): Promise<void>;
 }
 
 const nurLesen = { read: true, write: false } as const;
@@ -169,8 +160,8 @@ function alsAppDaten(n: Record<string, any>): AppDaten | undefined {
         : undefined;
 }
 
-// Eigene Objekte statt Instanz-Einstellungen: Änderungen daran starten die Instanz nicht neu.
-export class IoBrokerAblage implements Appablage, Profilablage, Geraeteablage {
+// Apps als eigene Objekte, nicht in den Instanzeinstellungen: Änderungen daran starten die Instanz nicht neu.
+export class IoBrokerAblage implements Appablage, Umstellungsablage {
     private readonly angelegt = new Set<string>();
 
     public constructor(private readonly adapter: ioBroker.Adapter) {}
@@ -237,29 +228,19 @@ export class IoBrokerAblage implements Appablage, Profilablage, Geraeteablage {
         [...this.angelegt].filter(id => id.startsWith(`apps.${appId}.`)).forEach(id => this.angelegt.delete(id));
     }
 
-    // Ganzes Objekt wie bei legeHinweise: Räume, Freigaben und Sperren sind Listen.
-    public async legeProfil(profilId: string, profil: Profil): Promise<void> {
-        await this.adapter.setObjectAsync(`profile.${profilId}`, {
-            type: 'config',
-            common: { name: profil.name },
-            native: profil,
+    // Frisch gelesen, damit nichts verloren geht, was inzwischen in den Einstellungen steht
+    public async ergaenzeEinstellungen(karten: Zeile[], profile: Zeile[]): Promise<void> {
+        const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
+        const native = (objekt?.native ?? {}) as { karten?: unknown; profile?: unknown };
+        const bisher = (w: unknown): unknown[] => (Array.isArray(w) ? w : []);
+        await this.adapter.updateConfig({
+            karten: [...bisher(native.karten), ...karten],
+            profile: [...bisher(native.profile), ...profile],
         });
     }
 
-    public async loescheProfil(profilId: string): Promise<void> {
-        await this.adapter.delObjectAsync(`profile.${profilId}`);
-    }
-
-    public async legeGeraet(geraetId: string, geraet: GeraetImHaus): Promise<void> {
-        await this.adapter.setObjectAsync(`geraete.${geraetId}`, {
-            type: 'config',
-            common: { name: geraet.name },
-            native: geraet,
-        });
-    }
-
-    public async loescheGeraet(geraetId: string): Promise<void> {
-        await this.adapter.delObjectAsync(`geraete.${geraetId}`);
+    public async loescheObjekt(id: string): Promise<void> {
+        await this.adapter.delObjectAsync(id);
     }
 
     public async schreibe(appId: string, werte: Appwerte, ts?: number): Promise<void> {

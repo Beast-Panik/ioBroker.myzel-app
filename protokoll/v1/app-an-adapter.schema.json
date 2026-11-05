@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myzel.local/protokoll/app/v1/app-an-adapter.schema.json",
-  "title": "Nachrichten von der App an den Adapter, Protokoll Version 1 und 2",
+  "title": "Nachrichten von der App an den Adapter, Protokoll Version 3",
   "description": "Jede Nachricht ist ein JSON-Objekt in einem WebSocket-Textframe, höchstens 64 KiB. Unbekannte Felder sind Fehler.",
   "oneOf": [
     { "$ref": "#/$defs/hallo" },

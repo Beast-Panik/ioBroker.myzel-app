@@ -9,7 +9,7 @@ import { SCHLIESSCODE } from '../basis/kern';
 import { qrInhalt } from '../basis/kopplung';
 import { neueAdapterId } from '../basis/kodierung';
 import { erzeugeIdentitaet, fingerabdruck } from '../basis/zertifikat';
-import { type Betrieb, Geraete, Verwaltung, geraetAus, neueKennung, profilAus } from './geraete';
+import { type Betrieb, Geraete, Verwaltung } from './geraete';
 
 const adapterId = neueAdapterId();
 const identitaet = erzeugeIdentitaet(adapterId);
@@ -104,13 +104,25 @@ describe('Gerätemanager', function () {
             .objekt_('system.config', { type: 'config', common: { language: 'de' } })
             .datenpunkt('zigbee.0.lampe.state', { type: 'boolean', name: { de: 'Lampe', en: 'Lamp' } }, false)
             .datenpunkt('zigbee.0.lampe.farbe', { type: 'string' }, 'rot')
-            .datenpunkt('zigbee.0.sensor.temperatur', { type: 'number', write: false }, 21.5)
-            .raum('wohnzimmer', { de: 'Wohnzimmer', en: 'Living room' }, ['zigbee.0.lampe', 'zigbee.0.sensor'])
+            .datenpunkt('zigbee.0.sensor.temperatur', { type: 'number', write: false, unit: '°C' }, 21.5)
+            .raum('wohnzimmer', { de: 'Wohnzimmer', en: 'Living room' }, [])
+            .karte('lampe', {
+                name: 'Lampe',
+                typ: 'lampe',
+                raum: 'enum.rooms.wohnzimmer',
+                teile: { schalten: 'zigbee.0.lampe.state', farbe: 'zigbee.0.lampe.farbe' },
+            })
+            .karte('fuehler', {
+                name: 'Fühler',
+                typ: 'messwert',
+                raum: 'enum.rooms.wohnzimmer',
+                teile: { wert1: 'zigbee.0.sensor.temperatur' },
+            })
             .profil('familie', {
                 name: 'Familie',
                 raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'schreiben' }],
-                freigaben: [],
-                sperren: [],
+                karten: [],
+                gesperrt: [],
             });
         const ablage = new Speicherablage(quelle);
         let bereit!: () => void;
@@ -173,7 +185,7 @@ describe('Gerätemanager', function () {
         await bis(() => dialog.verlauf.includes('fortschritt Warte auf die App'));
         const qr = qrAus(dialog);
         const g = await Gegenstelle.verbinde(u.port, qr.searchParams.get('f')!);
-        g.sende({ t: 'koppeln', v: 1, geheimnis: qr.searchParams.get('g'), name: 'Tablet Flur', geraet });
+        g.sende({ t: 'koppeln', v: 3, geheimnis: qr.searchParams.get('g'), name: 'Tablet Flur', geraet });
         await bis(() => dialog.verlauf.some(z => z.startsWith('frage')));
         return { dialog, ergebnis, g };
     }
@@ -200,6 +212,11 @@ describe('Gerätemanager', function () {
             expect(qr.searchParams.get('g')).to.match(/^[A-Za-z0-9_-]{22}$/);
             expect(qr.searchParams.getAll('h')).to.deep.equal(['192.168.1.5:8095', '[fd00::5]:8095']);
             expect(dialog.formulare[0].optionen?.ignoreApplyDisabled, 'Weiter ohne Änderung').to.equal(true);
+            const profile = dialog.formulare[0].schema.items.profil as { options: { label: ioBroker.Translated }[] };
+            expect(profile.options.map(o => o.label.de)).to.deep.equal([
+                'Kein Profil (sieht nichts)',
+                'Familie: sieht 2 Karten, 1 davon bedienbar',
+            ]);
             expect(dialog.verlauf).to.deep.equal([
                 'formular App koppeln',
                 'fortschritt Warte auf die App',
@@ -209,7 +226,7 @@ describe('Gerätemanager', function () {
             expect(await ergebnis).to.deep.equal({ refresh: true });
             const nachricht = await g.naechste();
             expect(nachricht.t).to.equal('gekoppelt');
-            expect((await g.naechste()).datenpunkte).to.have.length(3);
+            expect((await g.naechste()).karten).to.have.length(2);
             expect(u.ablage.apps.get(nachricht.app)?.profil).to.equal('familie');
             g.schliesse();
         });
@@ -224,7 +241,7 @@ describe('Gerätemanager', function () {
             const offen = mit.dialog.formulare[0].schema.items.offen as { text: ioBroker.Translated };
             expect(Object.keys(mit.dialog.formulare[0].schema.items)[0]).to.equal('offen');
             expect(offen.text.de).to.equal(
-                'Achtung: admin.0, admin.1 läuft ohne Anmeldung. Wer den Admin erreicht, kann Apps koppeln und Profile ändern.',
+                'Achtung: admin.0, admin.1 läuft ohne Anmeldung. Wer den Admin erreicht, kann Apps koppeln sowie Karten und Profile ändern.',
             );
             mit.g.schliesse();
             await mit.ergebnis;
@@ -246,7 +263,7 @@ describe('Gerätemanager', function () {
             expect(dialog.verlauf.at(-1)).to.contain('ohne Profil koppeln?');
             await ergebnis;
             const appId = (await g.naechste()).app;
-            expect((await g.naechste()).datenpunkte).to.deep.equal([]);
+            expect((await g.naechste()).karten).to.deep.equal([]);
             expect(u.ablage.apps.get(appId)?.profil).to.equal('');
             g.schliesse();
         });
@@ -264,7 +281,7 @@ describe('Gerätemanager', function () {
             expect(await u.verwaltung.koppeln(dialog)).to.deep.equal({ refresh: false });
             const qr = qrAus(dialog);
             const g = await Gegenstelle.verbinde(u.port, fp);
-            g.sende({ t: 'koppeln', v: 1, geheimnis: qr.searchParams.get('g'), name: 'X', geraet });
+            g.sende({ t: 'koppeln', v: 3, geheimnis: qr.searchParams.get('g'), name: 'X', geraet });
             expect(await g.naechste()).to.include({ t: 'fehler', code: 'zugang' });
         });
 
@@ -278,7 +295,7 @@ describe('Gerätemanager', function () {
                 'meldung Keine App hat sich gemeldet. Der QR-Code gilt nicht mehr.',
             ]);
             const g = await Gegenstelle.verbinde(u.port, fp);
-            g.sende({ t: 'koppeln', v: 1, geheimnis: qrAus(dialog).searchParams.get('g'), name: 'X', geraet });
+            g.sende({ t: 'koppeln', v: 3, geheimnis: qrAus(dialog).searchParams.get('g'), name: 'X', geraet });
             expect(await g.naechste()).to.include({ t: 'fehler', code: 'zugang' });
         });
 
@@ -294,7 +311,7 @@ describe('Gerätemanager', function () {
             const ergebnis = u.verwaltung.koppeln(dialog);
             await bis(() => dialog.verlauf.includes('fortschritt Warte auf die App'));
             app.g = await Gegenstelle.verbinde(u.port, fp);
-            app.g.sende({ t: 'koppeln', v: 1, geheimnis: qrAus(dialog).searchParams.get('g'), name: 'X', geraet });
+            app.g.sende({ t: 'koppeln', v: 3, geheimnis: qrAus(dialog).searchParams.get('g'), name: 'X', geraet });
             expect(await ergebnis).to.deep.equal({ refresh: false });
             expect(dialog.verlauf.at(-1)).to.equal('meldung Die App hat die Verbindung getrennt. Bitte neu koppeln.');
             expect(u.ablage.apps.size).to.equal(0);
@@ -332,201 +349,13 @@ describe('Gerätemanager', function () {
         });
     });
 
-    describe('Profile', () => {
-        it('legt ein neues Profil an, leere Zeilen fallen weg, ohne Recht gilt lesen, Vorschau vor dem Speichern', async () => {
-            const dialog = new Dialog([
-                { profil: '' },
-                {
-                    name: ' Familie Süd ',
-                    raeume: [{ enum: 'enum.rooms.wohnzimmer' }, { enum: '' }],
-                    freigaben: [{ id: 'zigbee.0.lampe.farbe', recht: 'schreiben' }, {}],
-                    sperren: [{ id: 'zigbee.0.sensor' }, { id: '' }],
-                },
-                true,
-            ]);
-            expect(await u.verwaltung.profile(dialog)).to.deep.equal({ refresh: true });
-            expect(dialog.verlauf).to.deep.equal([
-                'formular Profile',
-                'formular Neues Profil',
-                'frage Familie Süd: sieht 2 Datenpunkte, 1 davon schreibbar. Speichern?',
-            ]);
-            expect(u.quelle.katalog.profil('familie_sued')).to.deep.equal({
-                name: 'Familie Süd',
-                raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'lesen' }],
-                freigaben: [{ id: 'zigbee.0.lampe.farbe', recht: 'schreiben' }],
-                sperren: ['zigbee.0.sensor'],
-            });
-        });
-
-        it('die Auswahl zeigt je Profil die Vorschau', async () => {
-            const dialog = new Dialog([undefined]);
-            await u.verwaltung.profile(dialog);
-            const auswahl = dialog.formulare[0].schema.items.profil as { options: { label: ioBroker.Translated }[] };
-            expect(auswahl.options.map(o => o.label.de)).to.deep.equal([
-                'Neues Profil',
-                'Familie: sieht 3 Datenpunkte, 2 davon schreibbar',
-            ]);
-        });
-
-        it('ohne Namen eine Meldung und das Formular erneut, mit den eingegebenen Daten', async () => {
-            const eingabe = { name: '  ', raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'lesen' }] };
-            const dialog = new Dialog([{ profil: '' }, eingabe, undefined]);
-            expect(await u.verwaltung.profile(dialog)).to.deep.equal({ refresh: false });
-            expect(dialog.verlauf).to.deep.equal([
-                'formular Profile',
-                'formular Neues Profil',
-                'meldung Bitte einen Namen eingeben.',
-                'formular Neues Profil',
-            ]);
-            expect(dialog.formulare[2].optionen?.data).to.deep.equal(eingabe);
-            expect(u.quelle.katalog.alleProfile()).to.have.length(1);
-        });
-
-        it('umbenennen behält die ID; Nein bei der Vorschau führt zurück ins Formular', async () => {
-            const umbenannt = {
-                name: 'Alle',
-                raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'schreiben' }],
-                freigaben: [],
-                sperren: [],
-            };
-            const dialog = new Dialog([{ profil: 'familie' }, umbenannt, false, umbenannt, true]);
-            await u.verwaltung.profile(dialog);
-            expect(dialog.verlauf.filter(z => z.startsWith('formular'))).to.deep.equal([
-                'formular Profile',
-                'formular Profil „Familie“',
-                'formular Profil „Familie“',
-            ]);
-            expect(dialog.formulare[1].optionen?.data).to.deep.include({ name: 'Familie', loeschen: false });
-            expect(u.quelle.katalog.profil('familie')?.name).to.equal('Alle');
-            expect(u.quelle.katalog.alleProfile()).to.have.length(1);
-        });
-
-        it('löschen nimmt den Apps das Profil, die verbundene bekommt keine Datenpunkte mehr', async () => {
-            const { g, appId } = await gekoppelt();
-            const dialog = new Dialog([{ profil: 'familie' }, { name: 'Familie', loeschen: true }, true]);
-            await u.verwaltung.profile(dialog);
-            expect(dialog.verlauf.at(-1)).to.equal(
-                'frage Profil „Familie“ löschen? Apps mit diesem Profil: 1. Sie sehen danach nichts.',
-            );
-            expect(u.quelle.katalog.profil('familie')).to.equal(undefined);
-            expect(u.ablage.apps.get(appId)?.profil).to.equal('');
-            expect(u.ablage.werte_.get(appId)?.profil).to.equal('');
-            expect(await g.naechste()).to.deep.include({ t: 'rechte', profil: '', datenpunkte: [] });
-            g.schliesse();
-        });
-
-        it('ein Profil, das inzwischen gelöscht ist, lässt sich nicht bearbeiten', async () => {
-            const dialog = new Dialog([{ profil: 'weg' }]);
-            await u.verwaltung.profile(dialog);
-            expect(dialog.verlauf.at(-1)).to.equal('meldung Dieses Profil gibt es nicht mehr.');
-        });
-    });
-
-    describe('Geräte', () => {
-        const lampe = {
-            name: 'Wohnzimmerlampe',
-            typ: 'lampe' as const,
-            teile: { schalten: 'zigbee.0.lampe.state', farbe: 'zigbee.0.lampe.farbe' },
-        };
-
-        it('legt ein Gerät an, leere Teile fallen weg, die ID kommt aus dem Namen', async () => {
-            const dialog = new Dialog([
-                { geraet: '' },
-                { name: ' Wohnzimmerlampe ', typ: 'lampe', ...lampe.teile, helligkeit: '', farbtemperatur: null },
-            ]);
-            expect(await u.verwaltung.geraeteVerwalten(dialog)).to.deep.equal({ refresh: true });
-            expect(dialog.verlauf).to.deep.equal(['formular Geräte', 'formular Neues Gerät']);
-            expect(u.quelle.katalog.geraet('wohnzimmerlampe')).to.deep.equal(lampe);
-            const felder = Object.keys(dialog.formulare[1].schema.items);
-            expect(felder).to.deep.equal([
-                'name',
-                'typ',
-                'hinweis',
-                'schalten',
-                'helligkeit',
-                'farbe',
-                'farbtemperatur',
-            ]);
-        });
-
-        it('prüft jedes Teil und zeigt das Formular mit den eingegebenen Daten erneut', async () => {
-            u.quelle
-                .datenpunkt('zigbee.0.lampe.ct', { type: 'number' })
-                .geraet('flur', { name: 'Flur', typ: 'lampe', teile: { schalten: 'zigbee.0.lampe.state' } });
-            const falsch = [
-                { name: 'X', schalten: 'zigbee.0.lampe.farbe' },
-                { name: 'X', helligkeit: 'gibt.es.nicht' },
-                { name: 'X', farbtemperatur: 'zigbee.0.lampe.ct' },
-                { name: 'X', schalten: 'zigbee.0.lampe.state' },
-                { name: 'X', farbe: 'zigbee.0.lampe.farbe', helligkeit: '' },
-                { name: 'X' },
-                { name: '', farbe: 'zigbee.0.lampe.farbe' },
-            ];
-            const dialog = new Dialog([{ geraet: '' }, ...falsch.slice(0, 4), falsch[5], falsch[6], undefined]);
-            expect(await u.verwaltung.geraeteVerwalten(dialog)).to.deep.equal({ refresh: false });
-            expect(dialog.verlauf.filter(z => z.startsWith('meldung'))).to.deep.equal([
-                'meldung An und aus (true oder false): zigbee.0.lampe.farbe passt nicht.',
-                'meldung Helligkeit (Zahl): Datenpunkt gibt.es.nicht gibt es nicht.',
-                'meldung Lichtfarbe (Zahl mit min und max, K oder Mired): zigbee.0.lampe.ct passt nicht.',
-                'meldung An und aus (true oder false): zigbee.0.lampe.state gehört schon zu „Flur“.',
-                'meldung Bitte mindestens einen Datenpunkt verknüpfen.',
-                'meldung Bitte einen Namen eingeben.',
-            ]);
-            expect(dialog.formulare[2].optionen?.data).to.deep.equal(falsch[0]);
-            expect(u.quelle.katalog.geraete().map(([id]) => id)).to.deep.equal(['flur']);
-            expect(geraetAus(falsch[4], u.quelle.katalog, '')).to.deep.equal({
-                name: 'X',
-                typ: 'lampe',
-                teile: { farbe: 'zigbee.0.lampe.farbe' },
-            });
-        });
-
-        it('bearbeiten behält die ID und darf die eigenen Datenpunkte behalten; die Auswahl zeigt Name und Typ', async () => {
-            u.quelle.geraet('wohnzimmer', lampe);
-            const dialog = new Dialog([
-                { geraet: 'wohnzimmer' },
-                { name: 'Stehlampe', typ: 'lampe', schalten: 'zigbee.0.lampe.state' },
-            ]);
-            await u.verwaltung.geraeteVerwalten(dialog);
-            const auswahl = dialog.formulare[0].schema.items.geraet as { options: { label: ioBroker.Translated }[] };
-            expect(auswahl.options.map(o => o.label.de)).to.deep.equal(['Neues Gerät', 'Wohnzimmerlampe (Lampe)']);
-            expect(dialog.formulare[1].optionen?.data).to.deep.equal({
-                name: 'Wohnzimmerlampe',
-                typ: 'lampe',
-                ...lampe.teile,
-                loeschen: false,
-            });
-            expect(u.quelle.katalog.geraete()).to.deep.equal([
-                ['wohnzimmer', { name: 'Stehlampe', typ: 'lampe', teile: { schalten: 'zigbee.0.lampe.state' } }],
-            ]);
-        });
-
-        it('löschen erst nach der Frage; Nein führt zurück ins Formular', async () => {
-            u.quelle.geraet('wohnzimmer', lampe);
-            const loeschen = { ...lampe.teile, name: lampe.name, loeschen: true };
-            const dialog = new Dialog([{ geraet: 'wohnzimmer' }, loeschen, false, loeschen, true]);
-            expect(await u.verwaltung.geraeteVerwalten(dialog)).to.deep.equal({ refresh: true });
-            expect(dialog.verlauf.at(-1)).to.equal(
-                'frage Gerät „Wohnzimmerlampe“ löschen? Seine Datenpunkte bleiben und erscheinen auf den Handys wieder als einzelne Kacheln.',
-            );
-            expect(dialog.verlauf.filter(z => z.startsWith('formular'))).to.have.length(3);
-            expect(u.quelle.katalog.geraete()).to.deep.equal([]);
-        });
-
-        it('ein Gerät, das inzwischen gelöscht ist, lässt sich nicht bearbeiten', async () => {
-            const dialog = new Dialog([{ geraet: 'weg' }]);
-            await u.verwaltung.geraeteVerwalten(dialog);
-            expect(dialog.verlauf.at(-1)).to.equal('meldung Dieses Gerät gibt es nicht mehr.');
-        });
-    });
-
     describe('je App', () => {
         it('Profil wählen wirkt sofort und schreibt den Datenpunkt profil', async () => {
             const { g, appId } = await gekoppelt();
             await u.verwaltung.profilWaehlen(appId, new Dialog([{ profil: '' }]));
             expect(u.ablage.apps.get(appId)?.profil).to.equal('');
             expect(u.ablage.werte_.get(appId)?.profil).to.equal('');
-            expect(await g.naechste()).to.deep.include({ t: 'rechte', datenpunkte: [] });
+            expect(await g.naechste()).to.deep.include({ t: 'rechte', karten: [] });
             await u.verwaltung.profilWaehlen(appId, new Dialog([{ profil: 'gibtsnicht' }]));
             expect(u.ablage.apps.get(appId)?.profil).to.equal('');
             g.schliesse();
@@ -562,7 +391,7 @@ describe('Gerätemanager', function () {
             expect(u.ablage.apps.has(appId)).to.equal(false);
             expect(u.log).to.include(`info App ${appId} entfernt`);
             const neu = await Gegenstelle.verbinde(u.port, fp);
-            neu.sende({ t: 'hallo', v: 1, app: appId, zugang, geraet });
+            neu.sende({ t: 'hallo', v: 3, app: appId, zugang, geraet });
             expect(await neu.naechste()).to.include({ t: 'fehler', code: 'zugang' });
         });
 
@@ -592,8 +421,11 @@ describe('Gerätemanager', function () {
 
         it('Gerätekarte: Name, Verbindung aus online, Akku nur mit eingeschaltetem Akku', async () => {
             const { g, appId } = await gekoppelt();
-            const [ohne] = await u.verwaltung.geraete();
+            const liste = await u.verwaltung.geraete();
+            expect(liste, 'nur Apps, Karten haben einen eigenen Reiter').to.have.length(1);
+            const [ohne] = liste;
             expect(ohne).to.deep.include({ id: appId, name: 'Tablet Flur', model: 'Android 15, App 1.0.0' });
+            expect(ohne).to.not.have.property('group');
             expect(ohne.status).to.deep.equal({
                 connection: {
                     stateId: `${NAMESPACE}.apps.${appId}.online`,
@@ -661,34 +493,5 @@ describe('Anbindung an dm-utils', () => {
         }
         expect(unbehandelt).to.deep.equal([]);
         expect(log.meldungen.filter(m => m.startsWith('error'))).to.have.length(2);
-    });
-});
-
-describe('Profil-ID und Formular', () => {
-    it('Profil-ID aus dem Namen: klein, Umlaute ausgeschrieben, Akzente weg, höchstens 40 Zeichen, frei', () => {
-        const frei = (): boolean => false;
-        expect(neueKennung('Familie Süd', frei, 'profil')).to.equal('familie_sued');
-        expect(neueKennung('Größe & Maß', frei, 'profil')).to.equal('groesse_mass');
-        expect(neueKennung('Crème brûlée', frei, 'profil')).to.equal('creme_brulee');
-        expect(neueKennung('!!!', frei, 'profil')).to.equal('profil');
-        expect(neueKennung('x'.repeat(80), frei, 'profil')).to.have.length(36);
-        const vergeben = new Set(['gast', 'gast_2']);
-        expect(neueKennung('Gast', id => vergeben.has(id), 'profil')).to.equal('gast_3');
-        expect(neueKennung(`${'a'.repeat(36)}`, id => id === 'a'.repeat(36), 'profil')).to.match(/^[a-z0-9_]{1,40}$/);
-    });
-
-    it('Formulardaten werden geprüft, nicht übernommen', () => {
-        expect(profilAus({ name: 'x'.repeat(61) })).to.deep.equal({
-            en: 'The name has at most 60 characters.',
-            de: 'Der Name hat höchstens 60 Zeichen.',
-        });
-        const falsch = profilAus({ name: 'A', raeume: [{ enum: 'enum.functions.licht', recht: 'schreiben' }] });
-        expect(de(falsch as ioBroker.Translated)).to.match(/^Profil ungültig/);
-        expect(profilAus({ name: 'A', raeume: 'kaputt', freigaben: [null, 5], sperren: [{ id: 7 }] })).to.deep.equal({
-            name: 'A',
-            raeume: [],
-            freigaben: [],
-            sperren: [],
-        });
     });
 });

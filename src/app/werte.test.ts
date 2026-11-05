@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { Speicherquelle } from '../../test/speicher';
 import type { Verbindung } from '../basis/kern';
-import { Rechtestand, beschreibe } from './rechte';
+import { type Recht, Rechtestand } from './rechte';
 import {
     Abostelle,
     type Empfaenger,
@@ -114,13 +114,20 @@ describe('Abostelle', () => {
 });
 
 describe('Werteversand', () => {
-    const rechteFuer = (...ids: string[]): Rechtestand =>
+    const rechteFuer = (ids: string[], recht: Recht = 'lesen'): Rechtestand =>
         new Rechtestand({
             profil: 'x',
-            datenpunkte: ids.map(id => beschreibe(id, {}, 'lesen', 'de')),
             raeume: [],
-            funktionen: [],
-            geraete: [],
+            karten: [
+                {
+                    id: 'werte',
+                    name: 'Werte',
+                    typ: 'messwert',
+                    teile: Object.fromEntries(
+                        ids.map((id, i) => [`wert${i + 1}`, { id, typ: 'number', recht, name: id }]),
+                    ),
+                },
+            ],
         });
     const still = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined };
     const versand = (
@@ -143,7 +150,7 @@ describe('Werteversand', () => {
 
     it('schickt nach neuen Rechten nichts mehr für entfallene IDs, auch solange ein Abo die Reihe aufhält', async () => {
         const quelle = new Speicherquelle().datenpunkt('a.b', {}, 1).datenpunkt('a.c', {}, 2);
-        const { werte, gesendet } = versand(quelle, rechteFuer('a.b', 'a.c'));
+        const { werte, gesendet } = versand(quelle, rechteFuer(['a.b', 'a.c']));
         await werte.abo(['a.b', 'a.c']);
         let lesen!: () => void;
         const lies = quelle.lies.bind(quelle);
@@ -152,7 +159,7 @@ describe('Werteversand', () => {
         const zweitesAbo = werte.abo(['a.b', 'a.c']);
         await new Promise(r => setImmediate(r));
         werte.geaendert('a.c', { val: 3, ack: true, ts: Date.now(), lc: 0, from: 'x' });
-        const bereinigt = werte.neueRechte(rechteFuer('a.b'));
+        const bereinigt = werte.neueRechte(rechteFuer(['a.b']));
         werte.geaendert('a.c', { val: 4, ack: true, ts: Date.now(), lc: 0, from: 'x' });
         await new Promise(r => setTimeout(r, 150));
         lesen();
@@ -178,7 +185,7 @@ describe('Werteversand', () => {
 
     it('ein wartendes Abo wird vom nächsten ersetzt, nicht eingereiht', async () => {
         const quelle = new Speicherquelle().datenpunkt('a.b', {}, 1).datenpunkt('a.c', {}, 2).datenpunkt('a.d', {}, 3);
-        const { werte, gesendet } = versand(quelle, rechteFuer('a.b', 'a.c', 'a.d'));
+        const { werte, gesendet } = versand(quelle, rechteFuer(['a.b', 'a.c', 'a.d']));
         const halt = halteLesen(quelle);
         const erstes = werte.abo(['a.b']);
         await naechsterTakt();
@@ -193,7 +200,7 @@ describe('Werteversand', () => {
 
     it('eine Änderung während des Lesens kommt nach den werte, nicht davor', async () => {
         const quelle = new Speicherquelle().datenpunkt('a.b', {}, 1);
-        const { werte, gesendet } = versand(quelle, rechteFuer('a.b'));
+        const { werte, gesendet } = versand(quelle, rechteFuer(['a.b']));
         const halt = halteLesen(quelle);
         const abo = werte.abo(['a.b']);
         await naechsterTakt();
@@ -213,7 +220,7 @@ describe('Werteversand', () => {
         const quelle = new Speicherquelle()
             .datenpunkt('a.b', {}, 'x'.repeat(150))
             .datenpunkt('a.c', {}, 'y'.repeat(150));
-        const { werte, gesendet } = versand(quelle, rechteFuer('a.b', 'a.c'));
+        const { werte, gesendet } = versand(quelle, rechteFuer(['a.b', 'a.c']));
         await werte.abo(['a.b', 'a.c']);
         werte.geaendert('a.b', { val: 'z'.repeat(150), ack: true, ts: 1793720001000, lc: 0, from: 'x' });
         werte.geaendert('a.c', { val: 'z'.repeat(150), ack: true, ts: 1793720001000, lc: 0, from: 'x' });
@@ -228,14 +235,7 @@ describe('Werteversand', () => {
 
     it('setze: entfällt das Recht während des Lesens des Objekts, wird nichts geschrieben', async () => {
         const quelle = new Speicherquelle().datenpunkt('a.b', {}, 1);
-        const rechte = new Rechtestand({
-            profil: 'x',
-            datenpunkte: [beschreibe('a.b', {}, 'schreiben', 'de')],
-            raeume: [],
-            funktionen: [],
-            geraete: [],
-        });
-        const { werte, gesendet } = versand(quelle, rechte);
+        const { werte, gesendet } = versand(quelle, rechteFuer(['a.b'], 'schreiben'));
         const objekt = quelle.objekt.bind(quelle);
         quelle.objekt = async id => {
             const common = await objekt(id);
@@ -250,7 +250,7 @@ describe('Werteversand', () => {
     it('gibt beim Beenden alle Abos frei, auch wenn ein Abo vorher scheiterte', async () => {
         const quelle = new Speicherquelle().datenpunkt('a.b', {}, 1);
         quelle.abonniere = () => Promise.reject(new Error('Datenbank weg'));
-        const { werte, stelle } = versand(quelle, rechteFuer('a.b'));
+        const { werte, stelle } = versand(quelle, rechteFuer(['a.b']));
         const fehler = await werte.abo(['a.b']).then(
             () => '',
             (f: Error) => f.message,

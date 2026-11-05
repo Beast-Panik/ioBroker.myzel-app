@@ -93,12 +93,18 @@ describe('App-Simulator gegen den Server', function () {
         const quelle = new Speicherquelle(protokoll)
             .objekt_('system.config', { type: 'config', common: { language: 'de' } })
             .datenpunkt('zigbee.0.lampe.state', { type: 'boolean' }, false)
-            .raum('flur', 'Flur', ['zigbee.0.lampe'])
+            .raum('flur', 'Flur', [])
+            .karte('flurlicht', {
+                name: 'Flurlicht',
+                typ: 'schalter',
+                raum: 'enum.rooms.flur',
+                teile: { schalten: 'zigbee.0.lampe.state' },
+            })
             .profil('familie', {
                 name: 'Familie',
                 raeume: [{ enum: 'enum.rooms.flur', recht: 'schreiben' }],
-                freigaben: [],
-                sperren: [],
+                karten: [],
+                gesperrt: [],
             });
         ablage = new Speicherablage(quelle);
         let bereit!: () => void;

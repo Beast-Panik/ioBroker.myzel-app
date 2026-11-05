@@ -165,26 +165,19 @@ class IoBrokerAblage {
     await this.adapter.delObjectAsync(`apps.${appId}`);
     [...this.angelegt].filter((id) => id.startsWith(`apps.${appId}.`)).forEach((id) => this.angelegt.delete(id));
   }
-  // Ganzes Objekt wie bei legeHinweise: Räume, Freigaben und Sperren sind Listen.
-  async legeProfil(profilId, profil) {
-    await this.adapter.setObjectAsync(`profile.${profilId}`, {
-      type: "config",
-      common: { name: profil.name },
-      native: profil
+  // Frisch gelesen, damit nichts verloren geht, was inzwischen in den Einstellungen steht
+  async ergaenzeEinstellungen(karten, profile) {
+    var _a;
+    const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
+    const native = (_a = objekt == null ? void 0 : objekt.native) != null ? _a : {};
+    const bisher = (w) => Array.isArray(w) ? w : [];
+    await this.adapter.updateConfig({
+      karten: [...bisher(native.karten), ...karten],
+      profile: [...bisher(native.profile), ...profile]
     });
   }
-  async loescheProfil(profilId) {
-    await this.adapter.delObjectAsync(`profile.${profilId}`);
-  }
-  async legeGeraet(geraetId, geraet) {
-    await this.adapter.setObjectAsync(`geraete.${geraetId}`, {
-      type: "config",
-      common: { name: geraet.name },
-      native: geraet
-    });
-  }
-  async loescheGeraet(geraetId) {
-    await this.adapter.delObjectAsync(`geraete.${geraetId}`);
+  async loescheObjekt(id) {
+    await this.adapter.delObjectAsync(id);
   }
   async schreibe(appId, werte, ts) {
     for (const [name, val] of Object.entries(werte)) {

@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myzel.local/protokoll/app/v1/gemeinsam.schema.json",
-  "title": "Gemeinsame Bausteine, Protokoll myzel-app Version 1 und 2",
+  "title": "Gemeinsame Bausteine, Protokoll myzel-app Version 3",
   "$defs": {
     "version": {
-      "description": "Protokollversion. Die App sendet die neueste, die sie kennt; der Adapter antwortet in dieser oder lehnt mit fehler version ab. 2 bringt die Geräte (geraete)",
-      "enum": [1, 2]
+      "description": "Protokollversion. Die App sendet die neueste, die sie kennt; der Adapter antwortet in dieser oder lehnt mit fehler version ab. 3 bringt die Karten statt einzelner Datenpunkte",
+      "enum": [3]
     },
     "kennung": {
-      "description": "ID von Profilen und Geräten",
+      "description": "ID von Profilen und Karten",
       "type": "string",
       "pattern": "^[a-z0-9_]{1,40}$"
     },
