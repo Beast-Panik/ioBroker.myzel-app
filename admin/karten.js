@@ -1,6 +1,7 @@
-// Kartenseite im Reiter „Karten“ der Instanzeinstellungen (KONZEPT-KARTEN.md, Abschnitt 12)
+// Kartenseite im Reiter „Karten“ der Instanzeinstellungen (KONZEPT-KARTEN.md, Abschnitte 12 und 14)
 import {
     $,
+    ablehnungstext,
     abschnitt,
     ausDialog,
     fuelleAuswahl,
@@ -11,6 +12,7 @@ import {
     nimmTexte,
     oeffneDialog,
     starte,
+    symbol,
     texte,
     vergleicher,
 } from './seite.js';
@@ -34,6 +36,28 @@ const TEXTE = {
         loeschfrage: name => `„${name}“ löschen? Profile, die die Karte nennen, verlieren sie.`,
         keineKarten: 'Noch keine Karten. „Neue Karte“ legt eine an.',
         laedt: 'Lade Karten …',
+        vorschlaege: 'Vorschläge',
+        erkanntZahl: n => (n === 1 ? '1 erkannt' : `${n} erkannt`),
+        erkanntErklaerung:
+            'Erkannt an den Geräten in ioBroker, nach ihren Rollen. Geräte, deren Datenpunkte schon in einer Karte ' +
+            'stehen, fehlen hier. Angelegte Karten lassen sich danach wie jede andere ändern.',
+        sucht: 'Suche Geräte …',
+        keineVorschlaege:
+            'Keine Vorschläge. Entweder steht schon alles in einer Karte, oder ioBroker hat keine Geräte mit passenden ' +
+            'Rollen.',
+        alleWaehlen: 'Alle wählen',
+        keineWaehlen: 'Keine wählen',
+        anlegen: n => (n === 1 ? '1 Karte anlegen' : `${n === 0 ? '' : `${n} `}Karten anlegen`),
+        nichtAngelegt: (n, gruende) =>
+            `${n === 1 ? '1 Karte angelegt' : `${n} Karten angelegt`}. Nicht angelegt: ${gruende.join('; ')}`,
+        teilkurz: {
+            schalten: 'An',
+            helligkeit: 'Helligkeit',
+            farbe: 'Farbe',
+            farbtemperatur: 'Lichtfarbe',
+            soll: 'Soll',
+            ist: 'Ist',
+        },
         teilnamen: {
             schalten: 'An und aus (true oder false)',
             helligkeit: 'Helligkeit (Zahl)',
@@ -83,6 +107,27 @@ const TEXTE = {
         loeschfrage: name => `Delete “${name}”? Profiles naming the card lose it.`,
         keineKarten: 'No cards yet. “New card” creates one.',
         laedt: 'Loading cards …',
+        vorschlaege: 'Suggestions',
+        erkanntZahl: n => `${n} detected`,
+        erkanntErklaerung:
+            'Detected from the devices in ioBroker by their roles. Devices whose data points are already in a card ' +
+            'are not listed. Cards created here can be changed afterwards like any other.',
+        sucht: 'Looking for devices …',
+        keineVorschlaege:
+            'No suggestions. Either everything is already in a card, or ioBroker has no devices with suitable roles.',
+        alleWaehlen: 'Select all',
+        keineWaehlen: 'Select none',
+        anlegen: n => (n === 1 ? 'Create 1 card' : `Create ${n === 0 ? '' : `${n} `}cards`),
+        nichtAngelegt: (n, gruende) =>
+            `${n === 1 ? '1 card created' : `${n} cards created`}. Not created: ${gruende.join('; ')}`,
+        teilkurz: {
+            schalten: 'On',
+            helligkeit: 'Brightness',
+            farbe: 'Color',
+            farbtemperatur: 'Color temperature',
+            soll: 'Target',
+            ist: 'Actual',
+        },
         teilnamen: {
             schalten: 'On and off (true or false)',
             helligkeit: 'Brightness (number)',
@@ -118,6 +163,12 @@ const TEXTE = {
 
 let t = texte(TEXTE);
 let stand;
+// Vorschläge aus der Erkennung, wie zuletzt geladen, mit den Namen ihrer Datenpunkte, und was davon angehakt ist
+let erkannt = [];
+let erkanntNamen = {};
+const gewaehlt = new Set();
+// Ein Datenpunkt steht nur in einem Vorschlag.
+const schluessel = v => Object.values(v.karte.teile)[0];
 // Die Karte im Dialog: id fehlt bei einer neuen. Teile und Bezeichnungen bleiben beim Wechsel des Typs erhalten.
 let entwurf;
 
@@ -128,6 +179,10 @@ function beschrifte() {
     $('typLabel').textContent = t.typ;
     $('raumLabel').textContent = t.raum;
     $('teileLabel').textContent = t.teile;
+    $('erkennenText').textContent = t.vorschlaege;
+    $('erkanntTitel').textContent = t.vorschlaege;
+    $('erkanntErklaerung').textContent = t.erkanntErklaerung;
+    $('erkanntAbbrechen').textContent = t.abbrechen;
 }
 
 function uebernimm(neu) {
@@ -137,6 +192,9 @@ function uebernimm(neu) {
     beschrifte();
     zeichne();
     $('neu').disabled = false;
+    $('erkennen').disabled = false;
+    // Jede Änderung an den Karten ändert, was noch vorzuschlagen ist
+    void zaehle();
 }
 
 const lade = () => ladeStand('kartenstand', uebernimm);
@@ -165,8 +223,19 @@ function kartenkachel(karte) {
     });
 }
 
-// Wie die App: nach der Folge der Räume, Karten ohne Raum oder mit einem Raum, den es nicht mehr gibt, zuletzt; im Raum
-// nach Namen
+// Wie die App: nach der Folge der Räume, ohne Raum oder mit einem Raum, den es nicht mehr gibt, zuletzt; im Raum nach
+// Namen. Liefert [Überschrift, Einträge] je Raum.
+function nachRaeumen(eintraege, raumVon, sortiert) {
+    const gruppen = new Map();
+    for (const e of eintraege) {
+        const raum = raumname(raumVon(e)) === undefined ? '' : raumVon(e);
+        gruppen.set(raum, [...(gruppen.get(raum) ?? []), e]);
+    }
+    return [...gruppen.keys()]
+        .sort((a, b) => (a === '' ? 1 : b === '' ? -1 : raumfolge(a) - raumfolge(b)))
+        .map(raum => [raum ? raumname(raum) : t.ohneRaum, gruppen.get(raum).sort(sortiert)]);
+}
+
 function zeichne() {
     const liste = $('liste');
     liste.replaceChildren();
@@ -175,15 +244,148 @@ function zeichne() {
         return;
     }
     const vergleiche = vergleicher(stand.sprache);
-    const gruppen = new Map();
-    for (const karte of stand.karten) {
-        const raum = raumname(karte.raum) === undefined ? '' : karte.raum;
-        gruppen.set(raum, [...(gruppen.get(raum) ?? []), karte]);
+    const nachName = (a, b) => vergleiche(a.name, b.name) || (a.id < b.id ? -1 : 1);
+    for (const [titel, karten] of nachRaeumen(stand.karten, k => k.raum, nachName)) {
+        liste.append(abschnitt(titel, karten.map(kartenkachel)));
     }
-    const raeume = [...gruppen.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : raumfolge(a) - raumfolge(b)));
-    for (const raum of raeume) {
-        const karten = gruppen.get(raum).sort((a, b) => vergleiche(a.name, b.name) || (a.id < b.id ? -1 : 1));
-        liste.append(abschnitt(raum ? raumname(raum) : t.ohneRaum, karten.map(kartenkachel)));
+}
+
+function zeigeZahl(n) {
+    $('erkanntZahl').hidden = n === 0;
+    $('erkanntZahl').textContent = String(n);
+    $('erkennen').setAttribute('aria-label', n === 0 ? t.vorschlaege : `${t.vorschlaege}, ${t.erkanntZahl(n)}`);
+}
+
+// Nur für die Zahl am Knopf. Scheitert es, fehlt nur die Zahl; der Dialog fragt selbst.
+async function zaehle() {
+    try {
+        const antwort = await frage('vorschlaege');
+        zeigeZahl(antwort.fehler ? 0 : antwort.vorschlaege.length);
+    } catch {
+        zeigeZahl(0);
+    }
+}
+
+function teiltext(karte) {
+    return Object.entries(karte.teile)
+        .map(([teil, dp]) => (karte.typ === 'messwert' ? (erkanntNamen[dp] ?? dp) : (t.teilkurz[teil] ?? teil)))
+        .join(', ');
+}
+
+function erkanntZeile(v) {
+    const zeile = knoten('label', 'wahlzeile');
+    const box = knoten('input');
+    box.type = 'checkbox';
+    box.dataset.schluessel = schluessel(v);
+    box.checked = gewaehlt.has(box.dataset.schluessel);
+    box.addEventListener('change', () => {
+        if (box.checked) {
+            gewaehlt.add(box.dataset.schluessel);
+        } else {
+            gewaehlt.delete(box.dataset.schluessel);
+        }
+        zeigeWahl();
+    });
+    const s = knoten('span', 'symbol klein');
+    s.append(symbol(v.karte.typ));
+    const text = knoten('span', '', v.karte.name);
+    text.append(knoten('span', 'leise', `${t.typen[v.karte.typ] ?? v.karte.typ} · ${teiltext(v.karte)}`));
+    const name = knoten('span', 'wahlname mit-symbol');
+    name.append(s, text);
+    zeile.append(box, name, knoten('span', 'ziel', v.herkunft));
+    return zeile;
+}
+
+function zeigeWahl() {
+    const n = gewaehlt.size;
+    $('anlegen').textContent = t.anlegen(n);
+    $('anlegen').disabled = n === 0;
+    $('alleWaehlen').textContent = n > 0 && n === erkannt.length ? t.keineWaehlen : t.alleWaehlen;
+    $('alleWaehlen').disabled = erkannt.length === 0;
+}
+
+// leer: was ohne Vorschläge dasteht, etwa „Suche Geräte …“
+function zeichneErkannt(leer) {
+    const liste = $('erkanntListe');
+    liste.replaceChildren();
+    if (erkannt.length === 0 && leer) {
+        liste.append(knoten('p', 'leer', leer));
+    }
+    const vergleiche = vergleicher(stand.sprache);
+    const nachName = (a, b) => vergleiche(a.karte.name, b.karte.name);
+    for (const [titel, vorschlaege] of nachRaeumen(erkannt, v => v.karte.raum, nachName)) {
+        liste.append(knoten('div', 'gruppe', titel), ...vorschlaege.map(erkanntZeile));
+    }
+    zeigeWahl();
+}
+
+async function oeffneErkannt() {
+    erkannt = [];
+    gewaehlt.clear();
+    $('erkanntFehler').textContent = '';
+    zeichneErkannt(t.sucht);
+    $('erkanntDialog').showModal();
+    try {
+        const antwort = await frage('vorschlaege', { frisch: true });
+        if (antwort.fehler) {
+            $('erkanntFehler').textContent = ablehnungstext(antwort);
+            zeichneErkannt('');
+            return;
+        }
+        erkannt = antwort.vorschlaege;
+        erkanntNamen = antwort.namen;
+        zeigeZahl(erkannt.length);
+        zeichneErkannt(t.keineVorschlaege);
+    } catch (fehler) {
+        $('erkanntFehler').textContent = fehler.message;
+        zeichneErkannt('');
+    }
+}
+
+function waehleAlle() {
+    const alle = gewaehlt.size === erkannt.length;
+    gewaehlt.clear();
+    if (!alle) {
+        erkannt.forEach(v => gewaehlt.add(schluessel(v)));
+    }
+    document.querySelectorAll('#erkanntListe input[type="checkbox"]').forEach(box => {
+        box.checked = gewaehlt.has(box.dataset.schluessel);
+    });
+    zeigeWahl();
+}
+
+// Angelegte fallen aus der Liste; was abgelehnt wurde, bleibt angehakt stehen, mit Grund.
+async function legeAn(ereignis) {
+    ereignis.preventDefault();
+    const auswahl = erkannt.filter(v => gewaehlt.has(schluessel(v)));
+    $('erkanntFehler').textContent = '';
+    $('anlegen').disabled = true;
+    try {
+        const antwort = await frage('legeKartenAn', { karten: auswahl.map(v => v.karte) });
+        if (antwort.fehler) {
+            $('erkanntFehler').textContent = ablehnungstext(antwort, stand.hoechstens);
+            return;
+        }
+        uebernimm(antwort.stand);
+        const gruende = [];
+        antwort.ergebnisse.forEach((e, i) => {
+            if (e.fehler) {
+                gruende.push(`${auswahl[i].karte.name}: ${ablehnungstext(e, stand.hoechstens)}`);
+            } else {
+                gewaehlt.delete(schluessel(auswahl[i]));
+                erkannt = erkannt.filter(v => v !== auswahl[i]);
+            }
+        });
+        if (gruende.length === 0) {
+            $('erkanntDialog').close();
+            return;
+        }
+        zeichneErkannt(t.keineVorschlaege);
+        $('erkanntFehler').textContent = t.nichtAngelegt(auswahl.length - gruende.length, gruende);
+    } catch (fehler) {
+        $('erkanntFehler').textContent = fehler.message;
+    } finally {
+        zeigeWahl();
     }
 }
 
@@ -446,6 +648,10 @@ nimmTexte(t);
 beschrifte();
 $('liste').append(knoten('p', 'leer', t.laedt));
 $('typ').addEventListener('change', zeichneTeile);
+$('erkennen').addEventListener('click', () => void oeffneErkannt());
+$('alleWaehlen').addEventListener('click', waehleAlle);
+$('erkanntAbbrechen').addEventListener('click', () => $('erkanntDialog').close());
+$('erkanntFormular').addEventListener('submit', ereignis => void legeAn(ereignis));
 starte({
     name: 'myzel-app.kartenseite',
     lade,

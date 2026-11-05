@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "news": {
+            "0.6.0": {
+                "en": "Card suggestions: the Cards tab detects devices in ioBroker by their roles with @iobroker/type-detector and offers lamps, switches, thermostats and measurements as cards, by room. Tick what should become a card and create them in one go; devices already in a card are not offered",
+                "de": "Kartenvorschläge: Der Reiter Karten erkennt Geräte in ioBroker an ihren Rollen mit @iobroker/type-detector und bietet Lampen, Schalter, Thermostate und Messwerte als Karten an, nach Räumen. Ankreuzen, was eine Karte werden soll, und alles auf einmal anlegen; Geräte, die schon in einer Karte stehen, fehlen"
+            },
             "0.5.0": {
                 "en": "Floors: a new Rooms tab creates floors with a name and a short name and orders the rooms by dragging. Apps from protocol 5 show the floors as small headings in the room bar, only when the visible rooms lie on more than one floor, and the rooms in this order; older apps see no change. The Cards and Profiles tabs list the rooms in the same order",
                 "de": "Etagen: Ein neuer Reiter Räume legt Etagen mit Name und Kurzname an und ordnet die Räume durch Ziehen. Apps ab Protokoll 5 zeigen die Etagen als kleine Überschriften in der Raumleiste, nur wenn die sichtbaren Räume auf mehr als einer Etage liegen, und die Räume in dieser Folge; ältere Apps sehen keinen Unterschied. Die Reiter Karten und Profile nennen die Räume in derselben Folge"

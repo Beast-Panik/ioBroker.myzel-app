@@ -42,11 +42,13 @@ class MyzelApp extends utils.Adapter {
         // Vor dem Start, damit der Gerätemanager auch antwortet, wenn der Start scheitert. Nicht im Konstruktor:
         // Dort gibt es this.log noch nicht.
         new Geraete(this, new Verwaltung({ namespace: this.namespace, log: this.log, betrieb: () => this.betrieb }));
+        const objekte = new IoBrokerQuelle(this);
         const seite = {
             namespace: this.namespace,
             katalog: () => this.katalog,
             ablage: new IoBrokerAblage(this),
             log: this.log,
+            alleObjekte: () => objekte.alleObjekte(),
         };
         this.seiten = [
             [KARTENBEFEHLE, new Kartenseite(seite)],

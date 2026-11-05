@@ -24,20 +24,43 @@
                 class="hinweis"
                 id="hinweis"
             ></p>
-            <button
-                type="button"
-                class="knopf haupt"
-                id="neu"
-                disabled
-            >
-                <svg
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
+            <div class="knoepfe">
+                <button
+                    type="button"
+                    class="knopf"
+                    id="erkennen"
+                    disabled
                 >
-                    <path d="M12 5v14M5 12h14" />
-                </svg>
-                <span id="neuText"></span>
-            </button>
+                    <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"
+                        />
+                    </svg>
+                    <span id="erkennenText"></span>
+                    <span
+                        class="zahl"
+                        id="erkanntZahl"
+                        hidden
+                    ></span>
+                </button>
+                <button
+                    type="button"
+                    class="knopf haupt"
+                    id="neu"
+                    disabled
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                    >
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    <span id="neuText"></span>
+                </button>
+            </div>
         </header>
         <p
             class="meldung"
@@ -114,6 +137,48 @@
                         type="button"
                         class="knopf gefahr voll"
                         id="wirklichLoeschen"
+                    ></button>
+                </footer>
+            </form>
+        </dialog>
+
+        <dialog id="erkanntDialog">
+            <form
+                method="dialog"
+                id="erkanntFormular"
+            >
+                <h2 id="erkanntTitel"></h2>
+                <p
+                    class="erklaerung"
+                    id="erkanntErklaerung"
+                ></p>
+                <p
+                    class="meldung"
+                    id="erkanntFehler"
+                    role="alert"
+                ></p>
+                <div
+                    class="wahlliste erkannt"
+                    id="erkanntListe"
+                    aria-live="polite"
+                ></div>
+                <footer class="fuss">
+                    <button
+                        type="button"
+                        class="knopf"
+                        id="alleWaehlen"
+                    ></button>
+                    <span class="platz"></span>
+                    <button
+                        type="button"
+                        class="knopf"
+                        id="erkanntAbbrechen"
+                    ></button>
+                    <button
+                        type="submit"
+                        class="knopf haupt"
+                        id="anlegen"
+                        disabled
                     ></button>
                 </footer>
             </form>

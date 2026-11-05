@@ -64,11 +64,13 @@ class MyzelApp extends utils.Adapter {
   }
   async onReady() {
     new import_geraete.Geraete(this, new import_geraete.Verwaltung({ namespace: this.namespace, log: this.log, betrieb: () => this.betrieb }));
+    const objekte = new import_objekte.IoBrokerQuelle(this);
     const seite = {
       namespace: this.namespace,
       katalog: () => this.katalog,
       ablage: new import_objekte.IoBrokerAblage(this),
-      log: this.log
+      log: this.log,
+      alleObjekte: () => objekte.alleObjekte()
     };
     this.seiten = [
       [import_kartenseite.KARTENBEFEHLE, new import_kartenseite.Kartenseite(seite)],

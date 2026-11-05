@@ -1,3 +1,4 @@
+import { type Erkannt, type Vorschlag, erkenneGeraete, vorschlaege } from '../app/erkennung';
 import type { Katalog } from '../app/katalog';
 import type { Eintragsablage } from '../app/objekte';
 import {
@@ -24,10 +25,16 @@ export const KARTENBEFEHLE: readonly string[] = [
     'datenpunkte',
     'speichereKarte',
     'loescheKarte',
+    'vorschlaege',
+    'legeKartenAn',
 ];
 
 // Mehr hilft beim Suchen nicht; die Seite bittet dann um ein genaueres Wort.
 const TREFFER = 100;
+
+// Für die Zahl am Knopf fragt die Seite bei jedem neuen Stand, also auch nach jedem Speichern. Alle Objekte zu lesen
+// kostet in einer großen Installation Zeit und Speicher; der Dialog fragt frisch.
+const ERKENNUNG_GILT = 60_000;
 
 export interface Kartenzeile extends Karte {
     id: string;
@@ -47,6 +54,18 @@ export interface Kartenstand {
     namen: Record<string, string>;
     hoechstens: number;
     laengen: { name: number; bezeichnung: number };
+}
+
+export interface Vorschlagstand {
+    vorschlaege: Vorschlag[];
+    // Namen der Datenpunkte in den Vorschlägen, in der Systemsprache
+    namen: Record<string, string>;
+}
+
+export interface Anlage {
+    // Je Karte in der Reihenfolge der Anfrage
+    ergebnisse: ({ id: string } | Ablehnung)[];
+    stand: Kartenstand;
 }
 
 export interface Treffer {
@@ -106,6 +125,8 @@ function bereinigt(roh: unknown): unknown {
 // Karten im Reiter „Karten“: anzeigen mit Mängeln je Teil, Datenpunkte suchen, anlegen, ändern, löschen
 export class Kartenseite {
     private readonly karten: Eintraege<Karte>;
+    private erkannt?: { zeit: number; liste: Erkannt[] };
+    private readonly jetzt: () => number;
 
     public constructor(
         private readonly o: {
@@ -115,8 +136,11 @@ export class Kartenseite {
             ablage: Eintragsablage;
             log: Protokoll;
             jetzt?: () => number;
+            // Datenpunkte, Kanäle, Geräte, Aufzählungen und Adapter für die Erkennung
+            alleObjekte?: () => Promise<Record<string, ioBroker.Object>>;
         },
     ) {
+        this.jetzt = o.jetzt ?? Date.now;
         this.karten = new Eintraege(
             {
                 ordner: 'karten',
@@ -149,6 +173,10 @@ export class Kartenseite {
                 return this.mitStand(katalog, await this.karten.speichere(katalog, n.id, n.karte));
             case 'loescheKarte':
                 return this.mitStand(katalog, await this.karten.loesche(katalog, n.id));
+            case 'vorschlaege':
+                return this.vorschlaege(katalog, n.frisch === true);
+            case 'legeKartenAn':
+                return this.legeAn(katalog, n.karten);
             default:
                 return undefined;
         }
@@ -156,6 +184,55 @@ export class Kartenseite {
 
     private mitStand(katalog: Katalog, antwort: { id: string } | Ablehnung): unknown {
         return 'fehler' in antwort ? antwort : { id: antwort.id, stand: this.stand(katalog) };
+    }
+
+    private async vorschlaege(katalog: Katalog, frisch: boolean): Promise<Vorschlagstand> {
+        if (!this.o.alleObjekte) {
+            return { vorschlaege: [], namen: {} };
+        }
+        if (frisch || !this.erkannt || this.jetzt() - this.erkannt.zeit > ERKENNUNG_GILT) {
+            const liste = erkenneGeraete(await this.o.alleObjekte(), {
+                namespace: this.o.namespace,
+                sprache: katalog.sprache,
+            });
+            this.erkannt = { zeit: this.jetzt(), liste };
+        }
+        const liste = vorschlaege(this.erkannt.liste, {
+            karten: katalog.karten().map(([, k]) => k),
+            raeume: katalog.raeume(),
+            datenpunkt: dp => katalog.datenpunkt(dp),
+            eigeneApps: katalog.eigeneApps,
+        });
+        return {
+            vorschlaege: liste,
+            namen: this.namen(
+                katalog,
+                liste.map(v => v.karte),
+            ),
+        };
+    }
+
+    // Jede Karte für sich, mit derselben Prüfung wie aus dem Dialog
+    private async legeAn(katalog: Katalog, roh: unknown): Promise<Anlage | Ablehnung> {
+        if (!Array.isArray(roh) || roh.length > KARTEN_HOECHSTENS) {
+            return { fehler: 'ungueltig', einzelheiten: ['karten'] };
+        }
+        const ergebnisse: Anlage['ergebnisse'] = [];
+        for (const karte of roh) {
+            ergebnisse.push(await this.karten.speichere(katalog, undefined, karte));
+        }
+        return { ergebnisse, stand: this.stand(katalog) };
+    }
+
+    private namen(katalog: Katalog, karten: Karte[]): Record<string, string> {
+        const namen: Record<string, string> = {};
+        for (const dp of karten.flatMap(k => Object.values(k.teile))) {
+            const name = katalog.datenpunkt(dp)?.name;
+            if (typeof name === 'string' && name !== dp) {
+                namen[dp] = name;
+            }
+        }
+        return namen;
     }
 
     private stand(katalog: Katalog): Kartenstand {
@@ -169,19 +246,12 @@ export class Kartenseite {
             ...(k.bezeichnungen ? { bezeichnungen: { ...k.bezeichnungen } } : {}),
             maengel: maengelDerKarte(k, dp => katalog.datenpunkt(dp)),
         }));
-        const namen: Record<string, string> = {};
-        for (const dp of karten.flatMap(k => Object.values(k.teile))) {
-            const name = katalog.datenpunkt(dp)?.name;
-            if (typeof name === 'string' && name !== dp) {
-                namen[dp] = name;
-            }
-        }
         return {
             sprache,
             raeume: katalog.raeume().map(r => ({ id: r.id, name: text(r.name, sprache, r.id) })),
             arten: ARTEN,
             karten,
-            namen,
+            namen: this.namen(katalog, karten),
             hoechstens: KARTEN_HOECHSTENS,
             laengen: { name: NAME_LAENGE, bezeichnung: BEZEICHNUNG_LAENGE },
         };

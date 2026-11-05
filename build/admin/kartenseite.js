@@ -22,6 +22,7 @@ __export(kartenseite_exports, {
   Kartenseite: () => Kartenseite
 });
 module.exports = __toCommonJS(kartenseite_exports);
+var import_erkennung = require("../app/erkennung");
 var import_rechte = require("../app/rechte");
 var import_eintraege = require("./eintraege");
 const KARTENBEFEHLE = [
@@ -29,9 +30,12 @@ const KARTENBEFEHLE = [
   "kartenstand",
   "datenpunkte",
   "speichereKarte",
-  "loescheKarte"
+  "loescheKarte",
+  "vorschlaege",
+  "legeKartenAn"
 ];
 const TREFFER = 100;
+const ERKENNUNG_GILT = 6e4;
 const ARTEN = Object.fromEntries(
   import_rechte.KARTENTYPEN.map((typ) => {
     const art = import_rechte.KARTENARTEN[typ];
@@ -75,6 +79,8 @@ function bereinigt(roh) {
 class Kartenseite {
   constructor(o) {
     this.o = o;
+    var _a;
+    this.jetzt = (_a = o.jetzt) != null ? _a : Date.now;
     this.karten = new import_eintraege.Eintraege(
       {
         ordner: "karten",
@@ -89,6 +95,8 @@ class Kartenseite {
     );
   }
   karten;
+  erkannt;
+  jetzt;
   async beantworte(befehl, roh) {
     if (befehl === "kartenseite") {
       return (0, import_eintraege.seitenadresse)(this.o.namespace, "karten.html");
@@ -107,6 +115,10 @@ class Kartenseite {
         return this.mitStand(katalog, await this.karten.speichere(katalog, n.id, n.karte));
       case "loescheKarte":
         return this.mitStand(katalog, await this.karten.loesche(katalog, n.id));
+      case "vorschlaege":
+        return this.vorschlaege(katalog, n.frisch === true);
+      case "legeKartenAn":
+        return this.legeAn(katalog, n.karten);
       default:
         return void 0;
     }
@@ -114,8 +126,54 @@ class Kartenseite {
   mitStand(katalog, antwort) {
     return "fehler" in antwort ? antwort : { id: antwort.id, stand: this.stand(katalog) };
   }
-  stand(katalog) {
+  async vorschlaege(katalog, frisch) {
+    if (!this.o.alleObjekte) {
+      return { vorschlaege: [], namen: {} };
+    }
+    if (frisch || !this.erkannt || this.jetzt() - this.erkannt.zeit > ERKENNUNG_GILT) {
+      const liste2 = (0, import_erkennung.erkenneGeraete)(await this.o.alleObjekte(), {
+        namespace: this.o.namespace,
+        sprache: katalog.sprache
+      });
+      this.erkannt = { zeit: this.jetzt(), liste: liste2 };
+    }
+    const liste = (0, import_erkennung.vorschlaege)(this.erkannt.liste, {
+      karten: katalog.karten().map(([, k]) => k),
+      raeume: katalog.raeume(),
+      datenpunkt: (dp) => katalog.datenpunkt(dp),
+      eigeneApps: katalog.eigeneApps
+    });
+    return {
+      vorschlaege: liste,
+      namen: this.namen(
+        katalog,
+        liste.map((v) => v.karte)
+      )
+    };
+  }
+  // Jede Karte für sich, mit derselben Prüfung wie aus dem Dialog
+  async legeAn(katalog, roh) {
+    if (!Array.isArray(roh) || roh.length > import_rechte.KARTEN_HOECHSTENS) {
+      return { fehler: "ungueltig", einzelheiten: ["karten"] };
+    }
+    const ergebnisse = [];
+    for (const karte of roh) {
+      ergebnisse.push(await this.karten.speichere(katalog, void 0, karte));
+    }
+    return { ergebnisse, stand: this.stand(katalog) };
+  }
+  namen(katalog, karten) {
     var _a;
+    const namen = {};
+    for (const dp of karten.flatMap((k) => Object.values(k.teile))) {
+      const name = (_a = katalog.datenpunkt(dp)) == null ? void 0 : _a.name;
+      if (typeof name === "string" && name !== dp) {
+        namen[dp] = name;
+      }
+    }
+    return namen;
+  }
+  stand(katalog) {
     const sprache = katalog.sprache;
     const karten = katalog.karten().map(([id, k]) => ({
       id,
@@ -126,19 +184,12 @@ class Kartenseite {
       ...k.bezeichnungen ? { bezeichnungen: { ...k.bezeichnungen } } : {},
       maengel: (0, import_rechte.maengelDerKarte)(k, (dp) => katalog.datenpunkt(dp))
     }));
-    const namen = {};
-    for (const dp of karten.flatMap((k) => Object.values(k.teile))) {
-      const name = (_a = katalog.datenpunkt(dp)) == null ? void 0 : _a.name;
-      if (typeof name === "string" && name !== dp) {
-        namen[dp] = name;
-      }
-    }
     return {
       sprache,
       raeume: katalog.raeume().map((r) => ({ id: r.id, name: (0, import_rechte.text)(r.name, sprache, r.id) })),
       arten: ARTEN,
       karten,
-      namen,
+      namen: this.namen(katalog, karten),
       hoechstens: import_rechte.KARTEN_HOECHSTENS,
       laengen: { name: import_rechte.NAME_LAENGE, bezeichnung: import_rechte.BEZEICHNUNG_LAENGE }
     };

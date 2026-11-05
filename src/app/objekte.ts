@@ -426,6 +426,17 @@ export class IoBrokerQuelle implements Katalogquelle, Zustandsquelle {
         return ansicht.rows.map(r => r.value).filter(o => typeof o?._id === 'string');
     }
 
+    // Für die Erkennung von Geräten, nur auf Anfrage der Kartenseite
+    public async alleObjekte(): Promise<Record<string, ioBroker.Object>> {
+        const objekte: Record<string, ioBroker.Object> = {};
+        for (const typ of ['state', 'channel', 'device', 'enum', 'adapter'] as const) {
+            for (const o of await this.objekte(typ, '')) {
+                objekte[o._id] = o;
+            }
+        }
+        return objekte;
+    }
+
     public abonniere(ids: string[]): Promise<void> {
         return this.adapter.subscribeForeignStatesAsync(ids);
     }

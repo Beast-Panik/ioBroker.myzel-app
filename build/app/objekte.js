@@ -306,6 +306,16 @@ class IoBrokerQuelle {
     });
     return ansicht.rows.map((r) => r.value).filter((o) => typeof (o == null ? void 0 : o._id) === "string");
   }
+  // Für die Erkennung von Geräten, nur auf Anfrage der Kartenseite
+  async alleObjekte() {
+    const objekte = {};
+    for (const typ of ["state", "channel", "device", "enum", "adapter"]) {
+      for (const o of await this.objekte(typ, "")) {
+        objekte[o._id] = o;
+      }
+    }
+    return objekte;
+  }
   abonniere(ids) {
     return this.adapter.subscribeForeignStatesAsync(ids);
   }

@@ -3,7 +3,8 @@ import { NAMESPACE, Speicherablage, Speicherquelle } from '../../test/speicher';
 import { KARTENARTEN, KARTENTYPEN, KARTEN_HOECHSTENS, type Karte } from '../app/rechte';
 import type { Protokoll } from '../basis/grenzen';
 import type { Ablehnung } from './eintraege';
-import { type Kartenstand, Kartenseite, type Treffer } from './kartenseite';
+import type { Vorschlag } from '../app/erkennung';
+import { type Anlage, type Kartenstand, Kartenseite, type Treffer, type Vorschlagstand } from './kartenseite';
 
 describe('Kartenseite', () => {
     let quelle: Speicherquelle;
@@ -201,5 +202,110 @@ describe('Kartenseite', () => {
         expect(await frage('loescheKarte', { id: 'herd' })).to.deep.equal({ fehler: 'weg' });
         expect(await frage('loescheKarte', { id: '../x' })).to.deep.equal({ fehler: 'weg' });
         expect(await frage('loescheKarte', null)).to.deep.equal({ fehler: 'weg' });
+    });
+
+    describe('Vorschläge aus der Erkennung', () => {
+        let gelesen: number;
+        const lampe = (id: string, rolle: string, typ: string, mehr: object = {}): [string, ioBroker.Object] => [
+            id,
+            {
+                _id: id,
+                type: 'state',
+                common: {
+                    name: id.slice(id.lastIndexOf('.') + 1),
+                    role: rolle,
+                    type: typ,
+                    read: true,
+                    write: true,
+                    ...mehr,
+                },
+                native: {},
+            } as unknown as ioBroker.Object,
+        ];
+        const objekte = (): Record<string, ioBroker.Object> => ({
+            'z.0.lampe': {
+                _id: 'z.0.lampe',
+                type: 'device',
+                common: { name: 'Stehlampe' },
+                native: {},
+            },
+            ...Object.fromEntries([
+                lampe('z.0.lampe.an', 'switch.light', 'boolean'),
+                lampe('z.0.lampe.hell', 'level.dimmer', 'number', { min: 0, max: 100 }),
+            ]),
+        });
+        const mitErkennung = (): Kartenseite =>
+            new Kartenseite({
+                namespace: NAMESPACE,
+                katalog: () => quelle.katalog,
+                ablage,
+                log: protokoll,
+                jetzt: () => zeit,
+                alleObjekte: () => {
+                    gelesen++;
+                    return Promise.resolve(objekte());
+                },
+            });
+        const stehlampe: Vorschlag = {
+            herkunft: 'z.0.lampe',
+            karte: {
+                name: 'Stehlampe',
+                typ: 'lampe',
+                raum: 'enum.rooms.kueche',
+                teile: { schalten: 'z.0.lampe.an', helligkeit: 'z.0.lampe.hell' },
+            },
+        };
+
+        beforeEach(() => {
+            gelesen = 0;
+            quelle
+                .raum('kueche', { de: 'Küche', en: 'Kitchen' }, ['z.0.lampe'])
+                .datenpunkt('z.0.lampe.an', { type: 'boolean', name: 'An' })
+                .datenpunkt('z.0.lampe.hell', { type: 'number', name: 'Helligkeit', min: 0, max: 100 });
+        });
+
+        it('erkennt erst auf Anfrage, gilt 60 s, frisch auf Wunsch; ohne Zugang zu den Objekten keine', async () => {
+            const s = mitErkennung();
+            const erste = (await s.beantworte('vorschlaege', {})) as Vorschlagstand;
+            expect(erste).to.deep.equal({
+                vorschlaege: [stehlampe],
+                namen: { 'z.0.lampe.an': 'An', 'z.0.lampe.hell': 'Helligkeit' },
+            });
+            await s.beantworte('vorschlaege', {});
+            expect(gelesen).to.equal(1);
+            await s.beantworte('vorschlaege', { frisch: true });
+            expect(gelesen).to.equal(2);
+            zeit += 60_001;
+            await s.beantworte('vorschlaege', null);
+            expect(gelesen).to.equal(3);
+            expect(await frage('vorschlaege')).to.deep.equal({ vorschlaege: [], namen: {} });
+        });
+
+        it('legt jede Karte für sich an, Ergebnisse in der Reihenfolge der Anfrage; danach kein Vorschlag mehr', async () => {
+            const s = mitErkennung();
+            const ohneName = { ...stehlampe.karte, name: ' ' };
+            const antwort = (await s.beantworte('legeKartenAn', {
+                karten: [stehlampe.karte, ohneName],
+            })) as Anlage;
+            const id = `k${zeit.toString(36)}`;
+            expect(antwort.ergebnisse[0]).to.deep.equal({ id });
+            expect((antwort.ergebnisse[1] as Ablehnung).fehler).to.equal('ungueltig');
+            expect(antwort.stand.karten.map(k => k.name)).to.deep.equal(['Stehlampe']);
+            expect(ablage.karte_(id)).to.deep.equal(stehlampe.karte);
+            expect(log).to.deep.equal([`Karte „Stehlampe“ (${id}) gespeichert`]);
+            const danach = (await s.beantworte('vorschlaege', {})) as Vorschlagstand;
+            expect(danach.vorschlaege).to.deep.equal([]);
+        });
+
+        it('lehnt anderes als eine Liste ab, auch eine zu lange', async () => {
+            const s = mitErkennung();
+            for (const karten of [undefined, 'x', { a: 1 }, new Array(KARTEN_HOECHSTENS + 1).fill(schalter)]) {
+                expect(await s.beantworte('legeKartenAn', { karten })).to.deep.equal({
+                    fehler: 'ungueltig',
+                    einzelheiten: ['karten'],
+                });
+            }
+            expect(ablage.eintraege_.karten.size).to.equal(0);
+        });
     });
 });

@@ -33,6 +33,8 @@ Karten- und Profilseite (0.4.0): Die Reiter Karten und Profile sind je eine eige
 
 Etagen (0.5.0): Der Reiter Räume legt Etagen mit Name und Kurzname an, als Objekte `etagen.<id>`. Räume zieht man in eine Etage und ordnet sie dort, auch mit Alt und Pfeiltasten; das Zahnrad ändert Name, Kurzname und Position oder löscht die Etage. Apps ab Protokoll 5 bekommen die Etagen mit den sichtbaren Räumen und die Räume in dieser Folge, Räume ohne Etage danach nach Namen. Die App zeigt Überschriften nur, wenn die sichtbaren Räume auf mehr als einer Etage liegen. Apps mit Protokoll 3 oder 4 sehen keinen Unterschied. Die Reiter Karten und Profile nennen die Räume in derselben Folge. Etagen wirken sofort, ohne Neustart der Instanz.
 
+Vorschläge (0.6.0): Der Knopf „Vorschläge“ im Reiter Karten zeigt, wie viele Geräte aus ioBroker eine Karte werden können, erkannt mit `@iobroker/type-detector` (MIT) an Rollen und Aufbau. Im Dialog stehen sie nach Räumen; angehakte werden mit derselben Prüfung wie „Neue Karte“ angelegt. Lichter werden Lampen, Steckdosen Schalter, Thermostate Thermostate, Fühler und Kontakte Messwerte. Name und Raum kommen aus ioBroker. Nie vorgeschlagen werden Geräte, deren Datenpunkte schon in einer Karte stehen, auch über einen Alias, `system.*`, die Handydaten der Apps und Adapter, die keine Geräte steuern. Erkannt wird nur, wenn der Reiter danach fragt (KONZEPT-KARTEN.md, Abschnitt 14).
+
 ## Entwickeln
 
 ```
@@ -97,6 +99,10 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.6.0
+
+Vorschläge aus der Erkennung: Im Reiter Karten zeigt ein Knopf „Vorschläge“, wie viele Geräte aus ioBroker eine Karte werden können. Der Dialog listet sie nach Räumen, angehakte werden Karten. Erkannt mit `@iobroker/type-detector` 6.2.0, nur auf Anfrage der Seite. Neue Befehle `vorschlaege` und `legeKartenAn`
 
 ### 0.5.0
 

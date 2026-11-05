@@ -590,3 +590,59 @@ input[aria-invalid='true'] {
 [hidden] {
     display: none !important;
 }
+
+/* Kartenseite: Vorschläge aus der Erkennung (KONZEPT-KARTEN.md, Abschnitt 14) */
+.knoepfe {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.zahl {
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--haupt);
+    color: var(--haupt-text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+}
+
+.zahl[hidden] {
+    display: none;
+}
+
+.erkannt {
+    max-height: min(420px, calc(100vh - 260px));
+    overflow: auto;
+}
+
+.erkannt .leer {
+    margin: 16px 0;
+}
+
+.erkannt .wahlzeile {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    column-gap: 8px;
+    cursor: pointer;
+}
+
+.erkannt input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    margin: 0 4px 0 0;
+    accent-color: var(--haupt);
+}
+
+/* Die Stelle in ioBroker unter Name und Art, in der Flucht des Namens */
+.erkannt .ziel {
+    grid-column: 2;
+    margin-left: 38px;
+    color: var(--leise);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
