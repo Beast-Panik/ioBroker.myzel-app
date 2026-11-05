@@ -1,6 +1,7 @@
 import { ChannelDetector, type PatternControl, type PatternName, Types } from '@iobroker/type-detector';
 import {
     type Aufzaehlung,
+    KARTENARTEN,
     type Karte,
     type Kartentyp,
     type Merkmale,
@@ -48,6 +49,9 @@ const ZUORDNUNG: Partial<Record<Types, Zuordnung>> = {
     [Types.electricity]: { typ: 'messwert', werte: ['ELECTRIC_POWER', 'CONSUMPTION', 'CURRENT', 'VOLTAGE'] },
 };
 const ERKANNT = Object.keys(ZUORDNUNG) as Types[];
+const WERTE_HOECHSTENS = Object.keys(KARTENARTEN.messwert.teile).length;
+const alsWerte = (dps: string[]): Record<string, string> =>
+    Object.fromEntries(dps.map((dp, i) => [`wert${i + 1}`, dp]));
 // Sonst zerfiele eine Lampe mit Helligkeit und Lichtfarbe in zwei.
 const EIN_LICHT: PatternName[][] = [['light', 'dimmer', 'ct', 'rgbSingle', 'rgbwSingle', 'hue', 'rgb']];
 
@@ -75,6 +79,7 @@ export interface Erkannt {
     name: string;
     typ: Kartentyp;
     teile: Record<string, string>;
+    art: Types;
 }
 
 const istGeraet = (o: ioBroker.Object | undefined): boolean => o?.type === 'device' || o?.type === 'channel';
@@ -143,7 +148,7 @@ export function erkenneGeraete(
             const kanal = eltern(dps[0]).find(
                 e => nutzbar[e]?.type === 'channel' && liegtUnter(e, id) && dps.every(dp => liegtUnter(dp, e)),
             );
-            ergebnis.push({ herkunft: kanal ?? id, typ: ZUORDNUNG[steuerung.type]!.typ, teile });
+            ergebnis.push({ herkunft: kanal ?? id, typ: ZUORDNUNG[steuerung.type]!.typ, teile, art: steuerung.type });
         }
     }
     return benenne(ohneDoppelteAliase(ergebnis, nutzbar), nutzbar, o.sprache);
@@ -155,7 +160,7 @@ function teileAus(steuerung: PatternControl): Record<string, string> {
         namen.map(n => steuerung.states.find(s => s.name === n && s.id)?.id).find(Boolean);
     if (z.werte) {
         const werte = z.werte.map(n => zustand([n])).filter((dp): dp is string => dp !== undefined);
-        return Object.fromEntries(werte.slice(0, 4).map((dp, i) => [`wert${i + 1}`, dp]));
+        return alsWerte(werte.slice(0, WERTE_HOECHSTENS));
     }
     return Object.fromEntries(
         Object.entries(z.teile!)
@@ -206,14 +211,98 @@ function ohneDoppelteAliase<T extends Omit<Erkannt, 'name'>>(
 }
 
 export interface Vorschlag {
-    herkunft: string;
+    // Ein Gerät, Kanal oder Datenpunkt; mehrere, wenn Teile zusammengefasst sind
+    herkunft: string[];
+    // Was in ioBroker den Raum wechselt, wenn er im Dialog geändert wird: die Herkunft oder ein Objekt darüber
+    zuordnung: string[];
+    // Räume, in denen der Vorschlag über ein Objekt darüber bleibt, das nicht mitwandert
+    bleibt: { raum: string; ueber: string }[];
     karte: Karte;
 }
 
+interface Gruppe {
+    herkunft: string[];
+    name: string;
+    typ: Kartentyp;
+    teile: Record<string, string>;
+    arten: Types[];
+    raum: string;
+}
+
+// Wie die Teile in einer Karte des Typs stehen, undefined, wenn sie dort nicht hingehören
+function teileAls(g: Gruppe, typ: Kartentyp): Record<string, string> | undefined {
+    if (g.typ === typ || (typ === 'lampe' && g.typ === 'schalter')) {
+        return g.teile;
+    }
+    const werte = Object.values(g.teile);
+    if (typ === 'thermostat' && werte.length === 1 && g.arten.every(a => a === Types.temperature)) {
+        return { ist: werte[0] };
+    }
+    return undefined;
+}
+
+// Ein Schalter mit dem Namen einer Lampe ist ihr An, ein Temperaturfühler mit dem Namen eines Thermostats seine
+// Isttemperatur. Jedes Teil nur einmal, höchstens vier Werte, nie aus zwei verschiedenen Räumen.
+function vereint(a: Gruppe, b: Gruppe): Gruppe | undefined {
+    if (a.raum && b.raum && a.raum !== b.raum) {
+        return undefined;
+    }
+    const typ = a.typ === b.typ ? a.typ : (['lampe', 'thermostat'] as const).find(t => a.typ === t || b.typ === t);
+    const ta = typ && teileAls(a, typ);
+    const tb = typ && teileAls(b, typ);
+    if (!typ || !ta || !tb) {
+        return undefined;
+    }
+    let teile: Record<string, string>;
+    if (typ === 'messwert') {
+        const werte = [...Object.values(ta), ...Object.values(tb)];
+        if (werte.length > WERTE_HOECHSTENS) {
+            return undefined;
+        }
+        teile = alsWerte(werte);
+    } else {
+        if (Object.keys(ta).some(t => t in tb)) {
+            return undefined;
+        }
+        teile = Object.fromEntries(
+            Object.keys(KARTENARTEN[typ].teile)
+                .filter(t => ta[t] ?? tb[t])
+                .map(t => [t, ta[t] ?? tb[t]]),
+        );
+    }
+    return {
+        herkunft: [...a.herkunft, ...b.herkunft],
+        name: a.name,
+        typ,
+        teile,
+        arten: [...a.arten, ...b.arten],
+        raum: a.raum || b.raum,
+    };
+}
+
+// Ein Gerät, das ioBroker nicht als eines kennt, kommt in Teilen, etwa An, Helligkeit und Farbe einer Lampe als
+// einzelne Datenpunkte mit demselben Namen. Teile derselben Instanz mit gleichem Namen werden eins, wo sie sich ergänzen.
+function zusammengefasst(gruppen: Gruppe[]): Gruppe[] {
+    const ergebnis: Gruppe[] = [];
+    const offen = new Map<string, number[]>();
+    for (const g of gruppen) {
+        const instanz = g.herkunft[0].split('.').slice(0, 2).join('.');
+        const schluessel = `${instanz} ${g.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`;
+        const stellen = offen.get(schluessel) ?? [];
+        const stelle = stellen.find(i => vereint(ergebnis[i], g));
+        if (stelle === undefined) {
+            offen.set(schluessel, [...stellen, ergebnis.push(g) - 1]);
+        } else {
+            ergebnis[stelle] = vereint(ergebnis[stelle], g)!;
+        }
+    }
+    return ergebnis;
+}
+
 /**
- * Was davon die Seite anbietet: ohne Geräte, die schon in einer Karte stehen, auch über einen Alias; ohne Teile, deren
- * Datenpunkt nicht passt; ohne Karten, die auf keinem Handy erschienen. Raum ist der erste in der Folge der App, der
- * das Gerät oder einen seiner Datenpunkte enthält.
+ * Was davon die Seite anbietet: gleichnamige Teile zusammengefasst; ohne Geräte, die schon in einer Karte stehen, auch
+ * über einen Alias; ohne Teile, deren Datenpunkt nicht passt; ohne Karten, die auf keinem Handy erschienen. Raum ist der
+ * erste in der Folge der App, der das Gerät oder einen seiner Datenpunkte enthält.
  */
 export function vorschlaege(
     erkannt: Erkannt[],
@@ -227,24 +316,69 @@ export function vorschlaege(
 ): Vorschlag[] {
     const mitZielen = (dp: string): string[] => [dp, ...(o.datenpunkt(dp)?.ziele ?? [])];
     const belegt = new Set(o.karten.flatMap(k => Object.values(k.teile)).flatMap(mitZielen));
+    const gruppen = erkannt.map(e => ({
+        herkunft: [e.herkunft],
+        name: e.name,
+        typ: e.typ,
+        teile: e.teile,
+        arten: [e.art],
+        raum: raumVon([e.herkunft, ...Object.values(e.teile).flatMap(mitZielen)], o.raeume),
+    }));
     const ergebnis: Vorschlag[] = [];
-    for (const e of erkannt) {
-        const alle = Object.values(e.teile).flatMap(mitZielen);
+    const alleGruppen = zusammengefasst(gruppen);
+    for (const g of alleGruppen) {
+        const alle = Object.values(g.teile).flatMap(mitZielen);
         if (alle.some(dp => belegt.has(dp) || liegtUnter(dp, o.eigeneApps))) {
             continue;
         }
-        const raum = o.raeume.find(r => r.mitglieder.some(m => [e.herkunft, ...alle].some(id => liegtUnter(id, m))));
-        const roh: Karte = { name: e.name, typ: e.typ, raum: raum?.id ?? '', teile: e.teile };
+        const roh: Karte = { name: g.name, typ: g.typ, raum: g.raum, teile: g.teile };
         const maengel = maengelDerKarte(roh, o.datenpunkt);
         if (maengel.folge === 'fehlt') {
             continue;
         }
-        const passend = Object.entries(e.teile).filter(([teil]) => !maengel.teile[teil]);
+        const passend = Object.entries(g.teile).filter(([teil]) => !maengel.teile[teil]);
         // Werte rücken nach, damit kein Messwert mit Wert 2 ohne Wert 1 entsteht.
-        const teile = Object.fromEntries(
-            e.typ === 'messwert' ? passend.map(([, dp], i) => [`wert${i + 1}`, dp]) : passend,
-        );
-        ergebnis.push({ herkunft: e.herkunft, karte: { ...roh, teile } });
+        const teile = g.typ === 'messwert' ? alsWerte(passend.map(([, dp]) => dp)) : Object.fromEntries(passend);
+        ergebnis.push({ herkunft: g.herkunft, ...zuordnungVon(g, alleGruppen, o.raeume), karte: { ...roh, teile } });
     }
     return ergebnis;
+}
+
+// Steht die Herkunft über ein Objekt darüber in einem Raum, etwa das ganze Gerät, wandert das äußerste davon mit, wenn
+// kein anderer Vorschlag darunter liegt; auch einer, der schon eine Karte ist. Sonst bliebe es im alten Raum, der Raum
+// wäre nicht korrigiert. Liegen andere darunter, etwa ein zweites Relais für einen anderen Raum, bleibt es, wo es ist.
+// Eine ganze Instanz wandert nie.
+function zuordnungVon(g: Gruppe, alle: Gruppe[], raeume: Aufzaehlung[]): Pick<Vorschlag, 'zuordnung' | 'bleibt'> {
+    const andere = alle.filter(x => x !== g).flatMap(x => [...x.herkunft, ...Object.values(x.teile)]);
+    const zuordnung = new Set<string>();
+    const bleibt = new Map<string, { raum: string; ueber: string }>();
+    for (const h of g.herkunft) {
+        const halter = raeume.flatMap(r =>
+            r.mitglieder.filter(m => m !== h && liegtUnter(h, m)).map(m => ({ raum: r.id, ueber: m })),
+        );
+        const aeusserstes = halter
+            .map(x => x.ueber)
+            .filter(m => m.split('.').length > 2 && !andere.some(id => liegtUnter(id, m)))
+            .sort((a, b) => a.length - b.length)[0];
+        zuordnung.add(aeusserstes ?? h);
+        for (const x of halter.filter(x => !aeusserstes || !liegtUnter(x.ueber, aeusserstes))) {
+            bleibt.set(`${x.raum} ${x.ueber}`, x);
+        }
+    }
+    return { zuordnung: [...zuordnung], bleibt: [...bleibt.values()] };
+}
+
+// Der erste Raum in der Folge der App, der eines der Objekte enthält, selbst oder über ein Objekt darüber
+function raumVon(ids: string[], raeume: Aufzaehlung[]): string {
+    return raeume.find(r => r.mitglieder.some(m => ids.some(id => liegtUnter(id, m))))?.id ?? '';
+}
+
+// Die Mitglieder eines Raums, wenn die Zuordnung eines Vorschlags in einen anderen Raum zieht: Im neuen Raum kommt
+// dazu, was dort nicht schon selbst oder über ein Objekt darüber steht; aus jedem anderen fällt sie samt allem darunter.
+// Ein Objekt darüber bleibt, wo es ist (siehe zuordnungVon).
+export function verschoben(mitglieder: string[], zuordnung: string[], imNeuen: boolean): string[] {
+    if (imNeuen) {
+        return [...mitglieder, ...zuordnung.filter(z => !mitglieder.some(m => liegtUnter(z, m)))];
+    }
+    return mitglieder.filter(m => !zuordnung.some(z => liegtUnter(m, z)));
 }

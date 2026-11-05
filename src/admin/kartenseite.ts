@@ -1,4 +1,4 @@
-import { type Erkannt, type Vorschlag, erkenneGeraete, vorschlaege } from '../app/erkennung';
+import { type Erkannt, type Vorschlag, erkenneGeraete, verschoben, vorschlaege } from '../app/erkennung';
 import type { Katalog } from '../app/katalog';
 import type { Eintragsablage } from '../app/objekte';
 import {
@@ -63,8 +63,8 @@ export interface Vorschlagstand {
 }
 
 export interface Anlage {
-    // Je Karte in der Reihenfolge der Anfrage
-    ergebnisse: ({ id: string } | Ablehnung)[];
+    // Je Karte in der Reihenfolge der Anfrage; raum, wenn ioBroker den gewählten Raum nicht übernommen hat
+    ergebnisse: ({ id: string; raum?: 'gescheitert' } | Ablehnung)[];
     stand: Kartenstand;
 }
 
@@ -138,6 +138,8 @@ export class Kartenseite {
             jetzt?: () => number;
             // Datenpunkte, Kanäle, Geräte, Aufzählungen und Adapter für die Erkennung
             alleObjekte?: () => Promise<Record<string, ioBroker.Object>>;
+            // Mitglieder eines Raums in ioBroker ändern; true, wenn sich etwas geändert hat
+            aendereRaum?: (raum: string, aendere: (mitglieder: string[]) => string[]) => Promise<boolean>;
         },
     ) {
         this.jetzt = o.jetzt ?? Date.now;
@@ -212,16 +214,63 @@ export class Kartenseite {
         };
     }
 
-    // Jede Karte für sich, mit derselben Prüfung wie aus dem Dialog
+    // Jede Karte für sich, mit derselben Prüfung wie aus dem Dialog. Welche Objekte ihren Raum in ioBroker wechseln,
+    // bestimmt der Vorschlag mit denselben Datenpunkten, nie die Seite.
     private async legeAn(katalog: Katalog, roh: unknown): Promise<Anlage | Ablehnung> {
         if (!Array.isArray(roh) || roh.length > KARTEN_HOECHSTENS) {
             return { fehler: 'ungueltig', einzelheiten: ['karten'] };
         }
+        const datenpunkte = (k: Karte): string => Object.values(k.teile).sort().join(' ');
+        const angebot = new Map(
+            (await this.vorschlaege(katalog, false)).vorschlaege.map(v => [datenpunkte(v.karte), v]),
+        );
         const ergebnisse: Anlage['ergebnisse'] = [];
-        for (const karte of roh) {
-            ergebnisse.push(await this.karten.speichere(katalog, undefined, karte));
+        for (const roheKarte of roh) {
+            const antwort = await this.karten.speichere(katalog, undefined, roheKarte);
+            const karte = 'fehler' in antwort ? undefined : katalog.karte(antwort.id);
+            const vorschlag = karte && angebot.get(datenpunkte(karte));
+            ergebnisse.push(
+                karte && vorschlag && !(await this.ordneZu(katalog, karte, vorschlag))
+                    ? { ...antwort, raum: 'gescheitert' }
+                    : antwort,
+            );
         }
         return { ergebnisse, stand: this.stand(katalog) };
+    }
+
+    // Hat die Karte einen anderen Raum als den aus ioBroker, übernimmt ioBroker ihn. false, wenn das scheitert.
+    private async ordneZu(katalog: Katalog, karte: Karte, vorschlag: Vorschlag): Promise<boolean> {
+        const raeume = katalog.raeume();
+        const aendere = this.o.aendereRaum;
+        if (!aendere || karte.raum === vorschlag.karte.raum || (karte.raum && !raeume.some(r => r.id === karte.raum))) {
+            return true;
+        }
+        const zuordnung = vorschlag.zuordnung;
+        const betroffen = raeume.filter(
+            r => r.id === karte.raum || r.mitglieder.some(m => zuordnung.some(z => liegtUnter(m, z))),
+        );
+        const geaendert: string[] = [];
+        try {
+            for (const r of betroffen) {
+                if (await aendere(r.id, m => verschoben(m, zuordnung, r.id === karte.raum))) {
+                    const name = text(r.name, katalog.sprache, r.id);
+                    if (r.id === karte.raum) {
+                        geaendert.unshift(`jetzt in ${name}`);
+                    } else {
+                        geaendert.push(`nicht mehr in ${name}`);
+                    }
+                }
+            }
+        } catch (fehler) {
+            this.o.log.warn(
+                `Raum für „${karte.name}“ in ioBroker nicht übernommen (${zuordnung.join(', ')}): ${(fehler as Error).message}`,
+            );
+            return false;
+        }
+        if (geaendert.length > 0) {
+            this.o.log.info(`„${karte.name}“ in ioBroker ${geaendert.join(', ')} (${zuordnung.join(', ')})`);
+        }
+        return true;
     }
 
     private namen(katalog: Katalog, karten: Karte[]): Record<string, string> {

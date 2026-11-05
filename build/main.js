@@ -70,7 +70,8 @@ class MyzelApp extends utils.Adapter {
       katalog: () => this.katalog,
       ablage: new import_objekte.IoBrokerAblage(this),
       log: this.log,
-      alleObjekte: () => objekte.alleObjekte()
+      alleObjekte: () => objekte.alleObjekte(),
+      aendereRaum: (raum, aendere) => objekte.aendereRaum(raum, aendere)
     };
     this.seiten = [
       [import_kartenseite.KARTENBEFEHLE, new import_kartenseite.Kartenseite(seite)],

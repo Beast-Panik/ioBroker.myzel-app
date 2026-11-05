@@ -19,6 +19,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var erkennung_exports = {};
 __export(erkennung_exports, {
   erkenneGeraete: () => erkenneGeraete,
+  verschoben: () => verschoben,
   vorschlaege: () => vorschlaege
 });
 module.exports = __toCommonJS(erkennung_exports);
@@ -50,6 +51,8 @@ const ZUORDNUNG = {
   [import_type_detector.Types.electricity]: { typ: "messwert", werte: ["ELECTRIC_POWER", "CONSUMPTION", "CURRENT", "VOLTAGE"] }
 };
 const ERKANNT = Object.keys(ZUORDNUNG);
+const WERTE_HOECHSTENS = Object.keys(import_rechte.KARTENARTEN.messwert.teile).length;
+const alsWerte = (dps) => Object.fromEntries(dps.map((dp, i) => [`wert${i + 1}`, dp]));
 const EIN_LICHT = [["light", "dimmer", "ct", "rgbSingle", "rgbwSingle", "hue", "rgb"]];
 const OHNE_GERAETE = /* @__PURE__ */ new Set([
   "communication",
@@ -118,7 +121,7 @@ function erkenneGeraete(objekte, o) {
           return ((_a2 = nutzbar[e]) == null ? void 0 : _a2.type) === "channel" && (0, import_rechte.liegtUnter)(e, id) && dps.every((dp) => (0, import_rechte.liegtUnter)(dp, e));
         }
       );
-      ergebnis.push({ herkunft: kanal != null ? kanal : id, typ: ZUORDNUNG[steuerung.type].typ, teile });
+      ergebnis.push({ herkunft: kanal != null ? kanal : id, typ: ZUORDNUNG[steuerung.type].typ, teile, art: steuerung.type });
     }
   }
   return benenne(ohneDoppelteAliase(ergebnis, nutzbar), nutzbar, o.sprache);
@@ -131,7 +134,7 @@ function teileAus(steuerung) {
   }).find(Boolean);
   if (z.werte) {
     const werte = z.werte.map((n) => zustand([n])).filter((dp) => dp !== void 0);
-    return Object.fromEntries(werte.slice(0, 4).map((dp, i) => [`wert${i + 1}`, dp]));
+    return alsWerte(werte.slice(0, WERTE_HOECHSTENS));
   }
   return Object.fromEntries(
     Object.entries(z.teile).map(([teil, namen]) => [teil, zustand(namen)]).filter((e) => e[1] !== void 0)
@@ -171,36 +174,135 @@ function ohneDoppelteAliase(liste, objekte) {
   );
   return liste.filter((e) => (0, import_rechte.liegtUnter)(e.herkunft, "alias") || !Object.values(e.teile).every((dp) => ziele.has(dp)));
 }
-function vorschlaege(erkannt, o) {
+function teileAls(g, typ) {
+  if (g.typ === typ || typ === "lampe" && g.typ === "schalter") {
+    return g.teile;
+  }
+  const werte = Object.values(g.teile);
+  if (typ === "thermostat" && werte.length === 1 && g.arten.every((a) => a === import_type_detector.Types.temperature)) {
+    return { ist: werte[0] };
+  }
+  return void 0;
+}
+function vereint(a, b) {
+  if (a.raum && b.raum && a.raum !== b.raum) {
+    return void 0;
+  }
+  const typ = a.typ === b.typ ? a.typ : ["lampe", "thermostat"].find((t) => a.typ === t || b.typ === t);
+  const ta = typ && teileAls(a, typ);
+  const tb = typ && teileAls(b, typ);
+  if (!typ || !ta || !tb) {
+    return void 0;
+  }
+  let teile;
+  if (typ === "messwert") {
+    const werte = [...Object.values(ta), ...Object.values(tb)];
+    if (werte.length > WERTE_HOECHSTENS) {
+      return void 0;
+    }
+    teile = alsWerte(werte);
+  } else {
+    if (Object.keys(ta).some((t) => t in tb)) {
+      return void 0;
+    }
+    teile = Object.fromEntries(
+      Object.keys(import_rechte.KARTENARTEN[typ].teile).filter((t) => {
+        var _a;
+        return (_a = ta[t]) != null ? _a : tb[t];
+      }).map((t) => {
+        var _a;
+        return [t, (_a = ta[t]) != null ? _a : tb[t]];
+      })
+    );
+  }
+  return {
+    herkunft: [...a.herkunft, ...b.herkunft],
+    name: a.name,
+    typ,
+    teile,
+    arten: [...a.arten, ...b.arten],
+    raum: a.raum || b.raum
+  };
+}
+function zusammengefasst(gruppen) {
   var _a;
+  const ergebnis = [];
+  const offen = /* @__PURE__ */ new Map();
+  for (const g of gruppen) {
+    const instanz = g.herkunft[0].split(".").slice(0, 2).join(".");
+    const schluessel = `${instanz} ${g.name.trim().replace(/\s+/g, " ").toLocaleLowerCase()}`;
+    const stellen = (_a = offen.get(schluessel)) != null ? _a : [];
+    const stelle = stellen.find((i) => vereint(ergebnis[i], g));
+    if (stelle === void 0) {
+      offen.set(schluessel, [...stellen, ergebnis.push(g) - 1]);
+    } else {
+      ergebnis[stelle] = vereint(ergebnis[stelle], g);
+    }
+  }
+  return ergebnis;
+}
+function vorschlaege(erkannt, o) {
   const mitZielen = (dp) => {
-    var _a2, _b;
-    return [dp, ...(_b = (_a2 = o.datenpunkt(dp)) == null ? void 0 : _a2.ziele) != null ? _b : []];
+    var _a, _b;
+    return [dp, ...(_b = (_a = o.datenpunkt(dp)) == null ? void 0 : _a.ziele) != null ? _b : []];
   };
   const belegt = new Set(o.karten.flatMap((k) => Object.values(k.teile)).flatMap(mitZielen));
+  const gruppen = erkannt.map((e) => ({
+    herkunft: [e.herkunft],
+    name: e.name,
+    typ: e.typ,
+    teile: e.teile,
+    arten: [e.art],
+    raum: raumVon([e.herkunft, ...Object.values(e.teile).flatMap(mitZielen)], o.raeume)
+  }));
   const ergebnis = [];
-  for (const e of erkannt) {
-    const alle = Object.values(e.teile).flatMap(mitZielen);
+  const alleGruppen = zusammengefasst(gruppen);
+  for (const g of alleGruppen) {
+    const alle = Object.values(g.teile).flatMap(mitZielen);
     if (alle.some((dp) => belegt.has(dp) || (0, import_rechte.liegtUnter)(dp, o.eigeneApps))) {
       continue;
     }
-    const raum = o.raeume.find((r) => r.mitglieder.some((m) => [e.herkunft, ...alle].some((id) => (0, import_rechte.liegtUnter)(id, m))));
-    const roh = { name: e.name, typ: e.typ, raum: (_a = raum == null ? void 0 : raum.id) != null ? _a : "", teile: e.teile };
+    const roh = { name: g.name, typ: g.typ, raum: g.raum, teile: g.teile };
     const maengel = (0, import_rechte.maengelDerKarte)(roh, o.datenpunkt);
     if (maengel.folge === "fehlt") {
       continue;
     }
-    const passend = Object.entries(e.teile).filter(([teil]) => !maengel.teile[teil]);
-    const teile = Object.fromEntries(
-      e.typ === "messwert" ? passend.map(([, dp], i) => [`wert${i + 1}`, dp]) : passend
-    );
-    ergebnis.push({ herkunft: e.herkunft, karte: { ...roh, teile } });
+    const passend = Object.entries(g.teile).filter(([teil]) => !maengel.teile[teil]);
+    const teile = g.typ === "messwert" ? alsWerte(passend.map(([, dp]) => dp)) : Object.fromEntries(passend);
+    ergebnis.push({ herkunft: g.herkunft, ...zuordnungVon(g, alleGruppen, o.raeume), karte: { ...roh, teile } });
   }
   return ergebnis;
+}
+function zuordnungVon(g, alle, raeume) {
+  const andere = alle.filter((x) => x !== g).flatMap((x) => [...x.herkunft, ...Object.values(x.teile)]);
+  const zuordnung = /* @__PURE__ */ new Set();
+  const bleibt = /* @__PURE__ */ new Map();
+  for (const h of g.herkunft) {
+    const halter = raeume.flatMap(
+      (r) => r.mitglieder.filter((m) => m !== h && (0, import_rechte.liegtUnter)(h, m)).map((m) => ({ raum: r.id, ueber: m }))
+    );
+    const aeusserstes = halter.map((x) => x.ueber).filter((m) => m.split(".").length > 2 && !andere.some((id) => (0, import_rechte.liegtUnter)(id, m))).sort((a, b) => a.length - b.length)[0];
+    zuordnung.add(aeusserstes != null ? aeusserstes : h);
+    for (const x of halter.filter((x2) => !aeusserstes || !(0, import_rechte.liegtUnter)(x2.ueber, aeusserstes))) {
+      bleibt.set(`${x.raum} ${x.ueber}`, x);
+    }
+  }
+  return { zuordnung: [...zuordnung], bleibt: [...bleibt.values()] };
+}
+function raumVon(ids, raeume) {
+  var _a, _b;
+  return (_b = (_a = raeume.find((r) => r.mitglieder.some((m) => ids.some((id) => (0, import_rechte.liegtUnter)(id, m))))) == null ? void 0 : _a.id) != null ? _b : "";
+}
+function verschoben(mitglieder, zuordnung, imNeuen) {
+  if (imNeuen) {
+    return [...mitglieder, ...zuordnung.filter((z) => !mitglieder.some((m) => (0, import_rechte.liegtUnter)(z, m)))];
+  }
+  return mitglieder.filter((m) => !zuordnung.some((z) => (0, import_rechte.liegtUnter)(m, z)));
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   erkenneGeraete,
+  verschoben,
   vorschlaege
 });
 //# sourceMappingURL=erkennung.js.map

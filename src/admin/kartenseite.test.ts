@@ -247,7 +247,9 @@ describe('Kartenseite', () => {
                 },
             });
         const stehlampe: Vorschlag = {
-            herkunft: 'z.0.lampe',
+            herkunft: ['z.0.lampe'],
+            zuordnung: ['z.0.lampe'],
+            bleibt: [],
             karte: {
                 name: 'Stehlampe',
                 typ: 'lampe',
@@ -295,6 +297,76 @@ describe('Kartenseite', () => {
             expect(log).to.deep.equal([`Karte „Stehlampe“ (${id}) gespeichert`]);
             const danach = (await s.beantworte('vorschlaege', {})) as Vorschlagstand;
             expect(danach.vorschlaege).to.deep.equal([]);
+        });
+
+        describe('Raum in ioBroker', () => {
+            let aufrufe: string[];
+            let scheitert: boolean;
+            // Wie ioBroker: Der Katalog sieht die neuen Mitglieder gleich
+            const mitRaeumen = (): Kartenseite =>
+                new Kartenseite({
+                    namespace: NAMESPACE,
+                    katalog: () => quelle.katalog,
+                    ablage,
+                    log: protokoll,
+                    jetzt: () => zeit,
+                    alleObjekte: () => Promise.resolve(objekte()),
+                    aendereRaum: (raum, aendere) => {
+                        aufrufe.push(raum);
+                        if (scheitert) {
+                            return Promise.reject(new Error('kein Zugriff'));
+                        }
+                        const r = quelle.katalog.raeume().find(x => x.id === raum)!;
+                        const neu = aendere(r.mitglieder);
+                        quelle.raum(raum.slice('enum.rooms.'.length), r.name, neu);
+                        return Promise.resolve(neu.join() !== r.mitglieder.join());
+                    },
+                });
+            const mitglieder = (): Record<string, string[]> =>
+                Object.fromEntries(quelle.katalog.raeume().map(r => [r.id.slice('enum.rooms.'.length), r.mitglieder]));
+            const lege = async (raum: string): Promise<Anlage['ergebnisse'][number]> =>
+                ((await mitRaeumen().beantworte('legeKartenAn', { karten: [{ ...stehlampe.karte, raum }] })) as Anlage)
+                    .ergebnisse[0];
+
+            beforeEach(() => {
+                aufrufe = [];
+                scheitert = false;
+                quelle.raum('bad', 'Bad', ['z.0.lampe.an', 'y.0']).raum('flur', 'Flur', ['x.0']);
+            });
+
+            it('verschiebt die Herkunft des Vorschlags: in den neuen Raum, samt allem darunter aus den anderen', async () => {
+                expect(await lege('enum.rooms.flur')).to.deep.equal({ id: `k${zeit.toString(36)}` });
+                expect(mitglieder()).to.deep.equal({ kueche: [], bad: ['y.0'], flur: ['x.0', 'z.0.lampe'] });
+                expect(log[1]).to.equal(
+                    '„Stehlampe“ in ioBroker jetzt in Flur, nicht mehr in Bad, nicht mehr in Kitchen (z.0.lampe)',
+                );
+            });
+
+            it('nimmt sie mit „Ohne Raum“ aus allen Räumen', async () => {
+                await lege('');
+                expect(mitglieder()).to.deep.equal({ kueche: [], bad: ['y.0'], flur: ['x.0'] });
+            });
+
+            it('schreibt nichts beim Raum aus ioBroker oder einem Raum, den es nicht gibt', async () => {
+                // Bad steht in der Folge vor Küche und enthält einen Datenpunkt der Lampe
+                await lege('enum.rooms.bad');
+                zeit += 1;
+                await lege('enum.rooms.keller');
+                expect(aufrufe).to.deep.equal([]);
+                expect(mitglieder().kueche).to.deep.equal(['z.0.lampe']);
+            });
+
+            it('legt die Karte auch an, wenn ioBroker den Raum nicht übernimmt, und sagt es', async () => {
+                scheitert = true;
+                expect(await lege('enum.rooms.flur')).to.deep.equal({
+                    id: `k${zeit.toString(36)}`,
+                    raum: 'gescheitert',
+                });
+                expect(ablage.karte_(`k${zeit.toString(36)}`)?.raum).to.equal('enum.rooms.flur');
+                expect(log[1]).to.equal(
+                    'warn Raum für „Stehlampe“ in ioBroker nicht übernommen (z.0.lampe): kein Zugriff',
+                );
+            });
         });
 
         it('lehnt anderes als eine Liste ab, auch eine zu lange', async () => {

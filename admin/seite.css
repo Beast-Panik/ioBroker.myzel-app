@@ -625,10 +625,22 @@ input[aria-invalid='true'] {
 
 .erkannt .wahlzeile {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
     column-gap: 8px;
     cursor: pointer;
+}
+
+/* Der Raum je Vorschlag, rechts in der Zeile; geändert in der Hauptfarbe */
+.erkannt .raumwahl {
+    width: auto;
+    min-width: 150px;
+    min-height: 32px;
+    padding: 4px 8px;
+}
+
+.erkannt .raumwahl.geaendert {
+    border-color: var(--haupt);
 }
 
 .erkannt input[type='checkbox'] {
@@ -638,11 +650,29 @@ input[aria-invalid='true'] {
     accent-color: var(--haupt);
 }
 
-/* Die Stelle in ioBroker unter Name und Art, in der Flucht des Namens */
+/* Die Stelle in ioBroker unter Name und Art, in der Flucht des Namens; darunter, was ioBroker übernimmt */
 .erkannt .ziel {
-    grid-column: 2;
+    grid-column: 2 / 4;
     margin-left: 38px;
     color: var(--leise);
     font-size: 12px;
     overflow-wrap: anywhere;
+}
+
+.erkannt .verschiebt {
+    grid-column: 2 / 4;
+    margin-left: 38px;
+    color: var(--haupt);
+    font-size: 12px;
+}
+
+@media (max-width: 560px) {
+    .erkannt .wahlzeile {
+        grid-template-columns: auto 1fr;
+    }
+
+    .erkannt .raumwahl {
+        grid-column: 2;
+        margin: 6px 0 0 38px;
+    }
 }

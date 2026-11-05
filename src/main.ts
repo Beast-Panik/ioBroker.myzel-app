@@ -49,6 +49,8 @@ class MyzelApp extends utils.Adapter {
             ablage: new IoBrokerAblage(this),
             log: this.log,
             alleObjekte: () => objekte.alleObjekte(),
+            aendereRaum: (raum: string, aendere: (mitglieder: string[]) => string[]) =>
+                objekte.aendereRaum(raum, aendere),
         };
         this.seiten = [
             [KARTENBEFEHLE, new Kartenseite(seite)],

@@ -437,6 +437,22 @@ export class IoBrokerQuelle implements Katalogquelle, Zustandsquelle {
         return objekte;
     }
 
+    // Ändert die Mitglieder eines Raums; true, wenn sich etwas geändert hat. Das ganze Objekt neu: extendObject führte
+    // Listen stellenweise zusammen (DETAILENTWURF-APP.md, T12).
+    public async aendereRaum(raum: string, aendere: (mitglieder: string[]) => string[]): Promise<boolean> {
+        const objekt = raum.startsWith('enum.rooms.') ? await this.adapter.getForeignObjectAsync(raum) : undefined;
+        if (objekt?.type !== 'enum') {
+            return false;
+        }
+        const vorher = objekt.common.members ?? [];
+        const nachher = aendere(vorher);
+        if (nachher.length === vorher.length && nachher.every((m, i) => m === vorher[i])) {
+            return false;
+        }
+        await this.adapter.setForeignObjectAsync(raum, { ...objekt, common: { ...objekt.common, members: nachher } });
+        return true;
+    }
+
     public abonniere(ids: string[]): Promise<void> {
         return this.adapter.subscribeForeignStatesAsync(ids);
     }

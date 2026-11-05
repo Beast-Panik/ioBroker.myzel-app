@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { type Erkannt, type Vorschlag, erkenneGeraete, vorschlaege } from './erkennung';
+import { type Erkannt, type Vorschlag, erkenneGeraete, verschoben, vorschlaege } from './erkennung';
 import { type Aufzaehlung, type Karte, type Merkmale, merkmale } from './rechte';
 
 type Common = Record<string, unknown>;
@@ -189,7 +189,7 @@ describe('Vorschläge aus der Erkennung', () => {
             { name: 'Licht', typ: 'lampe', raum: '', teile: { schalten: 'hue.0.Deckenlampe.on' } },
             { name: 'Steckdose', typ: 'schalter', raum: '', teile: { schalten: 'alias.0.Steckdose.an' } },
         ];
-        const herkunft = vorschlagFuer(karten, [], objekte).map(v => v.herkunft);
+        const herkunft = vorschlagFuer(karten, [], objekte).flatMap(v => v.herkunft);
         expect(herkunft).to.not.include('hue.0.Deckenlampe');
         expect(herkunft).to.not.include('shelly.0.SHPLG-S#A1B2C3#1');
         expect(herkunft).to.include('zigbee.0.0017880104a1b2c3');
@@ -202,10 +202,53 @@ describe('Vorschläge aus der Erkennung', () => {
             raum('auch', ['hue.0']),
         ];
         const raumVon = (h: string): string | undefined =>
-            vorschlagFuer([], raeume).find(v => v.herkunft === h)?.karte.raum;
+            vorschlagFuer([], raeume).find(v => v.herkunft.includes(h))?.karte.raum;
         expect(raumVon('hmip.0.devices.3014F7.channels.1')).to.equal('enum.rooms.flur');
         expect(raumVon('hue.0.Deckenlampe')).to.equal('enum.rooms.wohnzimmer');
         expect(raumVon('zigbee.0.00158d000aa11bb2')).to.equal('');
+    });
+
+    describe('was in ioBroker den Raum wechselt', () => {
+        const SHELLY = 'shelly.0.SHPLG-S#A1B2C3#1';
+        const zweitesRelais = {
+            ...OBJEKTE,
+            ...Object.fromEntries([
+                kanal(`${SHELLY}.Relay1`, 'Relay1'),
+                zustand(`${SHELLY}.Relay1.Switch`, 'switch', 'boolean', { write: true }),
+            ]),
+        };
+        const raeume = [raum('kueche', [SHELLY]), raum('auch', ['hue.0'])];
+        const relais0 = (karten: Karte[] = [], objekte = OBJEKTE): Pick<Vorschlag, 'zuordnung' | 'bleibt'> => {
+            const v = vorschlagFuer(karten, raeume, objekte).find(x => x.herkunft.includes(`${SHELLY}.Relay0`))!;
+            return { zuordnung: v.zuordnung, bleibt: v.bleibt };
+        };
+
+        it('nimmt das ganze Gerät mit, wenn nur dieser Vorschlag daraus kommt', () => {
+            expect(relais0()).to.deep.equal({ zuordnung: [SHELLY], bleibt: [] });
+        });
+
+        it('lässt das Gerät stehen, wenn ein zweiter Vorschlag daraus kommt, auch einer, der schon eine Karte ist', () => {
+            const erwartet = {
+                zuordnung: [`${SHELLY}.Relay0`],
+                bleibt: [{ raum: 'enum.rooms.kueche', ueber: SHELLY }],
+            };
+            expect(relais0([], zweitesRelais)).to.deep.equal(erwartet);
+            const karte: Karte = {
+                name: 'R1',
+                typ: 'schalter',
+                raum: '',
+                teile: { schalten: `${SHELLY}.Relay1.Switch` },
+            };
+            expect(relais0([karte], zweitesRelais)).to.deep.equal(erwartet);
+        });
+
+        it('nimmt nie eine ganze Instanz mit', () => {
+            const hue = vorschlagFuer([], raeume).find(x => x.herkunft.includes('hue.0.Deckenlampe'))!;
+            expect([hue.zuordnung, hue.bleibt]).to.deep.equal([
+                ['hue.0.Deckenlampe'],
+                [{ raum: 'enum.rooms.auch', ueber: 'hue.0' }],
+            ]);
+        });
     });
 
     it('lässt Teile mit unpassendem Datenpunkt weg, Werte rücken nach; eine Karte, die fehlen würde, kommt nicht', () => {
@@ -225,14 +268,101 @@ describe('Vorschläge aus der Erkennung', () => {
             ]),
         };
         const v = vorschlagFuer([], [], objekte);
-        expect(v.find(x => x.herkunft === 'hue.0.Deckenlampe')?.karte.teile).to.deep.equal({
+        expect(v.find(x => x.herkunft.includes('hue.0.Deckenlampe'))?.karte.teile).to.deep.equal({
             schalten: 'hue.0.Deckenlampe.on',
             helligkeit: 'hue.0.Deckenlampe.level',
         });
-        expect(v.find(x => x.herkunft === 'zigbee.0.00158d0004c3d2e1')?.karte.teile).to.deep.equal({
+        expect(v.find(x => x.herkunft.includes('zigbee.0.00158d0004c3d2e1'))?.karte.teile).to.deep.equal({
             wert1: 'zigbee.0.00158d0004c3d2e1.humidity',
         });
-        expect(v.some(x => x.herkunft.startsWith('hmip.'))).to.equal(false);
+        expect(v.some(x => x.herkunft.some(h => h.startsWith('hmip.')))).to.equal(false);
+    });
+
+    describe('gleichnamige Teile ohne Gerät', () => {
+        const ordner = (id: string): [string, ioBroker.Object] => obj(id, 'folder', { name: id });
+        // Einzelne Datenpunkte in Ordnern, wie sie Skripte oder Gruppenadressen anlegen
+        const TEILE: Record<string, ioBroker.Object> = Object.fromEntries([
+            ordner('0_userdata.0.flur'),
+            zustand('0_userdata.0.flur.farbe', 'level.color.rgb', 'string', { write: true, name: 'Flurlampe' }),
+            zustand('0_userdata.0.flur.an', 'switch', 'boolean', { write: true, name: 'Flurlampe' }),
+            zustand('0_userdata.0.flur.hell', 'level.dimmer', 'number', {
+                write: true,
+                min: 0,
+                max: 100,
+                name: ' flurlampe',
+            }),
+            ordner('knx.0.soll'),
+            ordner('knx.0.ist'),
+            zustand('knx.0.soll.bad', 'level.temperature', 'number', {
+                write: true,
+                min: 5,
+                max: 30,
+                name: 'Heizung Bad',
+            }),
+            zustand('knx.0.ist.bad', 'value.temperature', 'number', { name: 'Heizung Bad' }),
+        ]);
+        const nur = (v: Vorschlag[], praefix: string): Vorschlag[] =>
+            v.filter(x => x.herkunft.some(h => h.startsWith(praefix)));
+
+        it('fasst An, Helligkeit und Farbe zu einer Lampe zusammen, die Teile in der Folge der Karte', () => {
+            const [lampe, ...mehr] = nur(vorschlagFuer([], [], TEILE), '0_userdata.');
+            expect(mehr).to.deep.equal([]);
+            expect(lampe.herkunft.sort()).to.deep.equal([
+                '0_userdata.0.flur.an',
+                '0_userdata.0.flur.farbe',
+                '0_userdata.0.flur.hell',
+            ]);
+            expect(lampe.karte.typ).to.equal('lampe');
+            expect(Object.entries(lampe.karte.teile)).to.deep.equal([
+                ['schalten', '0_userdata.0.flur.an'],
+                ['helligkeit', '0_userdata.0.flur.hell'],
+                ['farbe', '0_userdata.0.flur.farbe'],
+            ]);
+        });
+
+        it('nimmt einen Temperaturfühler mit dem Namen eines Thermostats als Isttemperatur', () => {
+            expect(nur(vorschlagFuer([], [], TEILE), 'knx.').map(v => v.karte)).to.deep.equal([
+                {
+                    name: 'Heizung Bad',
+                    typ: 'thermostat',
+                    raum: '',
+                    teile: { soll: 'knx.0.soll.bad', ist: 'knx.0.ist.bad' },
+                },
+            ]);
+        });
+
+        it('lässt getrennt, was in zwei Räumen steht, aus zwei Instanzen kommt oder sich nicht ergänzt', () => {
+            const objekte = {
+                ...TEILE,
+                ...Object.fromEntries([
+                    zustand('knx.0.soll.kueche', 'switch.light', 'boolean', { write: true, name: 'Deckenlampe' }),
+                    zustand('knx.0.ist.bad2', 'level.dimmer', 'number', { write: true, name: 'Deckenlampe' }),
+                    zustand('knx.1.soll.spiegel', 'switch.light', 'boolean', { write: true, name: 'Spiegel' }),
+                    zustand('knx.0.ist.spiegel', 'level.dimmer', 'number', { write: true, name: 'Spiegel' }),
+                    zustand('knx.0.soll.dose1', 'switch', 'boolean', { write: true, name: 'Dose' }),
+                    zustand('knx.0.ist.dose2', 'switch', 'boolean', { write: true, name: 'Dose' }),
+                ]),
+            };
+            const raeume = [raum('kueche', ['knx.0.soll.kueche']), raum('bad', ['knx.0.ist.bad2'])];
+            const getrennt = nur(vorschlagFuer([], raeume, objekte), 'knx.')
+                .filter(v => v.karte.name !== 'Heizung Bad')
+                .map(v => [v.karte.name, ...v.herkunft]);
+            expect(getrennt.sort()).to.deep.equal([
+                ['Deckenlampe', 'knx.0.ist.bad2'],
+                ['Deckenlampe', 'knx.0.soll.kueche'],
+                ['Dose', 'knx.0.ist.dose2'],
+                ['Dose', 'knx.0.soll.dose1'],
+                ['Spiegel', 'knx.0.ist.spiegel'],
+                ['Spiegel', 'knx.1.soll.spiegel'],
+            ]);
+        });
+
+        it('lässt die ganze Lampe aus, wenn eines ihrer Teile schon in einer Karte steht', () => {
+            const karten: Karte[] = [
+                { name: 'Flur', typ: 'schalter', raum: '', teile: { schalten: '0_userdata.0.flur.an' } },
+            ];
+            expect(nur(vorschlagFuer(karten, [], TEILE), '0_userdata.')).to.deep.equal([]);
+        });
     });
 
     it('schlägt nie etwas vor, das auf Handydaten zeigt, auch nicht über einen Alias', () => {
@@ -245,6 +375,24 @@ describe('Vorschläge aus der Erkennung', () => {
                 }),
             ]),
         };
-        expect(vorschlagFuer([], [], objekte).some(v => v.herkunft.startsWith('alias.'))).to.equal(false);
+        expect(vorschlagFuer([], [], objekte).some(v => v.herkunft.some(h => h.startsWith('alias.')))).to.equal(false);
+    });
+});
+
+describe('Raum in ioBroker verschieben', () => {
+    const zuordnung = ['z.0.lampe.an', 'z.0.lampe.hell'];
+
+    it('nimmt in den neuen Raum, was dort nicht schon selbst oder über ein Objekt darüber steht', () => {
+        expect(verschoben(['a.0'], zuordnung, true)).to.deep.equal(['a.0', ...zuordnung]);
+        expect(verschoben(['z.0.lampe.an'], zuordnung, true)).to.deep.equal(['z.0.lampe.an', 'z.0.lampe.hell']);
+        expect(verschoben(['z.0.lampe'], zuordnung, true)).to.deep.equal(['z.0.lampe']);
+    });
+
+    it('nimmt sie samt allem darunter aus anderen Räumen; ein Objekt darüber bleibt', () => {
+        expect(verschoben(['z.0.lampe.an', 'z.0.lampe.hell.x', 'z.0.lampen', 'a.0'], zuordnung, false)).to.deep.equal([
+            'z.0.lampen',
+            'a.0',
+        ]);
+        expect(verschoben(['z.0.lampe'], zuordnung, false)).to.deep.equal(['z.0.lampe']);
     });
 });

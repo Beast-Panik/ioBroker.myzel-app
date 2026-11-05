@@ -33,7 +33,7 @@ Karten- und Profilseite (0.4.0): Die Reiter Karten und Profile sind je eine eige
 
 Etagen (0.5.0): Der Reiter Räume legt Etagen mit Name und Kurzname an, als Objekte `etagen.<id>`. Räume zieht man in eine Etage und ordnet sie dort, auch mit Alt und Pfeiltasten; das Zahnrad ändert Name, Kurzname und Position oder löscht die Etage. Apps ab Protokoll 5 bekommen die Etagen mit den sichtbaren Räumen und die Räume in dieser Folge, Räume ohne Etage danach nach Namen. Die App zeigt Überschriften nur, wenn die sichtbaren Räume auf mehr als einer Etage liegen. Apps mit Protokoll 3 oder 4 sehen keinen Unterschied. Die Reiter Karten und Profile nennen die Räume in derselben Folge. Etagen wirken sofort, ohne Neustart der Instanz.
 
-Vorschläge (0.6.0): Der Knopf „Vorschläge“ im Reiter Karten zeigt, wie viele Geräte aus ioBroker eine Karte werden können, erkannt mit `@iobroker/type-detector` (MIT) an Rollen und Aufbau. Im Dialog stehen sie nach Räumen; angehakte werden mit derselben Prüfung wie „Neue Karte“ angelegt. Lichter werden Lampen, Steckdosen Schalter, Thermostate Thermostate, Fühler und Kontakte Messwerte. Name und Raum kommen aus ioBroker. Nie vorgeschlagen werden Geräte, deren Datenpunkte schon in einer Karte stehen, auch über einen Alias, `system.*`, die Handydaten der Apps und Adapter, die keine Geräte steuern. Erkannt wird nur, wenn der Reiter danach fragt (KONZEPT-KARTEN.md, Abschnitt 14).
+Vorschläge (0.6.0): Der Knopf „Vorschläge“ im Reiter Karten zeigt, wie viele Geräte aus ioBroker eine Karte werden können, erkannt mit `@iobroker/type-detector` (MIT) an Rollen und Aufbau. Im Dialog stehen sie nach Räumen; angehakte werden mit derselben Prüfung wie „Neue Karte“ angelegt. Lichter werden Lampen, Steckdosen Schalter, Thermostate Thermostate, Fühler und Kontakte Messwerte. Name und Raum kommen aus ioBroker. Seit 0.7.0 werden Teile mit gleichem Namen aus einer Instanz eins, wo sie sich ergänzen, etwa An, Helligkeit und Farbe einer Lampe als einzelne Datenpunkte. Je Vorschlag lässt sich der Raum wählen; weicht er von ioBroker ab, verschiebt der Adapter beim Anlegen Gerät, Kanal oder Datenpunkte dorthin, auch das ganze Gerät, wenn nur dieser Vorschlag daraus kommt. Nie vorgeschlagen werden Geräte, deren Datenpunkte schon in einer Karte stehen, auch über einen Alias, `system.*`, die Handydaten der Apps und Adapter, die keine Geräte steuern. Erkannt wird nur, wenn der Reiter danach fragt (KONZEPT-KARTEN.md, Abschnitt 14).
 
 ## Entwickeln
 
@@ -99,6 +99,10 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.7.0
+
+Vorschläge fassen Teile mit gleichem Namen aus einer Instanz zusammen, etwa An, Helligkeit und Farbe einer Lampe, die ioBroker nicht als ein Gerät kennt. Ein Schalter mit dem Namen einer Lampe wird ihr An, ein Temperaturfühler mit dem Namen eines Thermostats seine Isttemperatur. Teile in verschiedenen Räumen, aus zwei Instanzen oder doppelte Teile bleiben getrennt. Im Dialog hat jeder Vorschlag eine Raumauswahl; ein geänderter Raum wird beim Anlegen in ioBroker übernommen, das Gerät, der Kanal oder die Datenpunkte wandern in den neuen Raum und aus den anderen heraus
 
 ### 0.6.0
 

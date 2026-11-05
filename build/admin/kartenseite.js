@@ -151,16 +151,60 @@ class Kartenseite {
       )
     };
   }
-  // Jede Karte für sich, mit derselben Prüfung wie aus dem Dialog
+  // Jede Karte für sich, mit derselben Prüfung wie aus dem Dialog. Welche Objekte ihren Raum in ioBroker wechseln,
+  // bestimmt der Vorschlag mit denselben Datenpunkten, nie die Seite.
   async legeAn(katalog, roh) {
     if (!Array.isArray(roh) || roh.length > import_rechte.KARTEN_HOECHSTENS) {
       return { fehler: "ungueltig", einzelheiten: ["karten"] };
     }
+    const datenpunkte = (k) => Object.values(k.teile).sort().join(" ");
+    const angebot = new Map(
+      (await this.vorschlaege(katalog, false)).vorschlaege.map((v) => [datenpunkte(v.karte), v])
+    );
     const ergebnisse = [];
-    for (const karte of roh) {
-      ergebnisse.push(await this.karten.speichere(katalog, void 0, karte));
+    for (const roheKarte of roh) {
+      const antwort = await this.karten.speichere(katalog, void 0, roheKarte);
+      const karte = "fehler" in antwort ? void 0 : katalog.karte(antwort.id);
+      const vorschlag = karte && angebot.get(datenpunkte(karte));
+      ergebnisse.push(
+        karte && vorschlag && !await this.ordneZu(katalog, karte, vorschlag) ? { ...antwort, raum: "gescheitert" } : antwort
+      );
     }
     return { ergebnisse, stand: this.stand(katalog) };
+  }
+  // Hat die Karte einen anderen Raum als den aus ioBroker, übernimmt ioBroker ihn. false, wenn das scheitert.
+  async ordneZu(katalog, karte, vorschlag) {
+    const raeume = katalog.raeume();
+    const aendere = this.o.aendereRaum;
+    if (!aendere || karte.raum === vorschlag.karte.raum || karte.raum && !raeume.some((r) => r.id === karte.raum)) {
+      return true;
+    }
+    const zuordnung = vorschlag.zuordnung;
+    const betroffen = raeume.filter(
+      (r) => r.id === karte.raum || r.mitglieder.some((m) => zuordnung.some((z) => (0, import_rechte.liegtUnter)(m, z)))
+    );
+    const geaendert = [];
+    try {
+      for (const r of betroffen) {
+        if (await aendere(r.id, (m) => (0, import_erkennung.verschoben)(m, zuordnung, r.id === karte.raum))) {
+          const name = (0, import_rechte.text)(r.name, katalog.sprache, r.id);
+          if (r.id === karte.raum) {
+            geaendert.unshift(`jetzt in ${name}`);
+          } else {
+            geaendert.push(`nicht mehr in ${name}`);
+          }
+        }
+      }
+    } catch (fehler) {
+      this.o.log.warn(
+        `Raum f\xFCr \u201E${karte.name}\u201C in ioBroker nicht \xFCbernommen (${zuordnung.join(", ")}): ${fehler.message}`
+      );
+      return false;
+    }
+    if (geaendert.length > 0) {
+      this.o.log.info(`\u201E${karte.name}\u201C in ioBroker ${geaendert.join(", ")} (${zuordnung.join(", ")})`);
+    }
+    return true;
   }
   namen(katalog, karten) {
     var _a;

@@ -39,8 +39,29 @@ const TEXTE = {
         vorschlaege: 'Vorschläge',
         erkanntZahl: n => (n === 1 ? '1 erkannt' : `${n} erkannt`),
         erkanntErklaerung:
-            'Erkannt an den Geräten in ioBroker, nach ihren Rollen. Geräte, deren Datenpunkte schon in einer Karte ' +
-            'stehen, fehlen hier. Angelegte Karten lassen sich danach wie jede andere ändern.',
+            'Erkannt an den Geräten in ioBroker, nach ihren Rollen; Teile mit gleichem Namen sind zu einer Karte ' +
+            'zusammengefasst. Geräte, deren Datenpunkte schon in einer Karte stehen, fehlen hier. Den Raum wählst du ' +
+            'je Vorschlag, ioBroker übernimmt ihn beim Anlegen.',
+        raumFuer: name => `Raum für ${name}`,
+        // bleibt: [Raum, Objekt], wo der Vorschlag über ein Objekt darüber bleibt, das nicht mitwandert
+        verschiebt: (von, nach, bleibt) => {
+            const vonBleibt = bleibt.some(([raum]) => raum === von);
+            const haupt = nach
+                ? vonBleibt
+                    ? `zusätzlich in ${nach}`
+                    : von
+                      ? `von ${von} nach ${nach}`
+                      : `neu in ${nach}`
+                : von && !vonBleibt
+                  ? `nicht mehr in ${von}`
+                  : '';
+            const rest = bleibt.map(([raum, ueber]) =>
+                haupt ? `in ${raum} bleibt es über ${ueber}` : `bleibt es in ${raum} über ${ueber}`,
+            );
+            return `In ioBroker ${[haupt, ...rest].filter(Boolean).join('; ')}`;
+        },
+        raumNichtUebernommen: namen =>
+            `Den Raum hat ioBroker nicht übernommen für: ${namen.join(', ')}. Die Karten haben ihn trotzdem; den Grund nennt das Log.`,
         sucht: 'Suche Geräte …',
         keineVorschlaege:
             'Keine Vorschläge. Entweder steht schon alles in einer Karte, oder ioBroker hat keine Geräte mit passenden ' +
@@ -110,8 +131,26 @@ const TEXTE = {
         vorschlaege: 'Suggestions',
         erkanntZahl: n => `${n} detected`,
         erkanntErklaerung:
-            'Detected from the devices in ioBroker by their roles. Devices whose data points are already in a card ' +
-            'are not listed. Cards created here can be changed afterwards like any other.',
+            'Detected from the devices in ioBroker by their roles; parts with the same name are combined into one ' +
+            'card. Devices whose data points are already in a card are not listed. Choose the room for each ' +
+            'suggestion, ioBroker takes it over when the card is created.',
+        raumFuer: name => `Room for ${name}`,
+        verschiebt: (von, nach, bleibt) => {
+            const vonBleibt = bleibt.some(([raum]) => raum === von);
+            const haupt = nach
+                ? vonBleibt
+                    ? `additionally in ${nach}`
+                    : von
+                      ? `from ${von} to ${nach}`
+                      : `newly in ${nach}`
+                : von && !vonBleibt
+                  ? `no longer in ${von}`
+                  : '';
+            const rest = bleibt.map(([raum, ueber]) => `it stays in ${raum} via ${ueber}`);
+            return `In ioBroker ${[haupt, ...rest].filter(Boolean).join('; ')}`;
+        },
+        raumNichtUebernommen: namen =>
+            `ioBroker did not take over the room for: ${namen.join(', ')}. The cards have it anyway; the log gives the reason.`,
         sucht: 'Looking for devices …',
         keineVorschlaege:
             'No suggestions. Either everything is already in a card, or ioBroker has no devices with suitable roles.',
@@ -167,8 +206,11 @@ let stand;
 let erkannt = [];
 let erkanntNamen = {};
 const gewaehlt = new Set();
+// Nur Räume, die anders gewählt sind als in ioBroker
+const raumWahl = new Map();
 // Ein Datenpunkt steht nur in einem Vorschlag.
 const schluessel = v => Object.values(v.karte.teile)[0];
+const gewaehlterRaum = v => raumWahl.get(schluessel(v)) ?? v.karte.raum;
 // Die Karte im Dialog: id fehlt bei einer neuen. Teile und Bezeichnungen bleiben beim Wechsel des Typs erhalten.
 let entwurf;
 
@@ -200,6 +242,7 @@ function uebernimm(neu) {
 const lade = () => ladeStand('kartenstand', uebernimm);
 
 const raumname = id => stand.raeume.find(r => r.id === id)?.name;
+const raumOptionen = () => [['', t.ohneRaum], ...stand.raeume.map(r => [r.id, r.name])];
 // Wie in der App: nach Etagen und der Folge aus dem Reiter „Räume“, Räume ohne Etage nach Namen
 const raumfolge = id => stand.raeume.findIndex(r => r.id === id);
 
@@ -272,6 +315,15 @@ function teiltext(karte) {
         .join(', ');
 }
 
+// Zusammengefasste Teile aus einem Ordner kurz: „a.b.an, .hell, .farbe“
+function herkunftText(ids) {
+    const eltern = id => id.slice(0, id.lastIndexOf('.'));
+    if (ids.length > 1 && ids.every(id => eltern(id) === eltern(ids[0]))) {
+        return [ids[0], ...ids.slice(1).map(id => id.slice(eltern(id).length))].join(', ');
+    }
+    return ids.join(', ');
+}
+
 function erkanntZeile(v) {
     const zeile = knoten('label', 'wahlzeile');
     const box = knoten('input');
@@ -292,7 +344,31 @@ function erkanntZeile(v) {
     text.append(knoten('span', 'leise', `${t.typen[v.karte.typ] ?? v.karte.typ} · ${teiltext(v.karte)}`));
     const name = knoten('span', 'wahlname mit-symbol');
     name.append(s, text);
-    zeile.append(box, name, knoten('span', 'ziel', v.herkunft));
+    const wahl = knoten('select', 'raumwahl');
+    wahl.setAttribute('aria-label', t.raumFuer(v.karte.name));
+    fuelleAuswahl(wahl, raumOptionen(), gewaehlterRaum(v));
+    const verschiebt = knoten('span', 'verschiebt');
+    const zeigeRaum = () => {
+        const anders = wahl.value !== v.karte.raum;
+        wahl.classList.toggle('geaendert', anders);
+        verschiebt.hidden = !anders;
+        const bleibt = v.bleibt.filter(b => b.raum !== wahl.value).map(b => [raumname(b.raum), b.ueber]);
+        verschiebt.textContent = anders ? t.verschiebt(raumname(v.karte.raum), raumname(wahl.value), bleibt) : '';
+    };
+    // Wer den Raum ändert, will die Karte.
+    wahl.addEventListener('change', () => {
+        if (wahl.value === v.karte.raum) {
+            raumWahl.delete(box.dataset.schluessel);
+        } else {
+            raumWahl.set(box.dataset.schluessel, wahl.value);
+        }
+        box.checked = true;
+        gewaehlt.add(box.dataset.schluessel);
+        zeigeRaum();
+        zeigeWahl();
+    });
+    zeigeRaum();
+    zeile.append(box, name, wahl, knoten('span', 'ziel', herkunftText(v.herkunft)), verschiebt);
     return zeile;
 }
 
@@ -322,6 +398,7 @@ function zeichneErkannt(leer) {
 async function oeffneErkannt() {
     erkannt = [];
     gewaehlt.clear();
+    raumWahl.clear();
     $('erkanntFehler').textContent = '';
     zeichneErkannt(t.sucht);
     $('erkanntDialog').showModal();
@@ -361,27 +438,39 @@ async function legeAn(ereignis) {
     $('erkanntFehler').textContent = '';
     $('anlegen').disabled = true;
     try {
-        const antwort = await frage('legeKartenAn', { karten: auswahl.map(v => v.karte) });
+        const antwort = await frage('legeKartenAn', {
+            karten: auswahl.map(v => ({ ...v.karte, raum: gewaehlterRaum(v) })),
+        });
         if (antwort.fehler) {
             $('erkanntFehler').textContent = ablehnungstext(antwort, stand.hoechstens);
             return;
         }
         uebernimm(antwort.stand);
         const gruende = [];
+        const ohneRaum = [];
         antwort.ergebnisse.forEach((e, i) => {
             if (e.fehler) {
                 gruende.push(`${auswahl[i].karte.name}: ${ablehnungstext(e, stand.hoechstens)}`);
-            } else {
-                gewaehlt.delete(schluessel(auswahl[i]));
-                erkannt = erkannt.filter(v => v !== auswahl[i]);
+                return;
             }
+            if (e.raum === 'gescheitert') {
+                ohneRaum.push(auswahl[i].karte.name);
+            }
+            gewaehlt.delete(schluessel(auswahl[i]));
+            raumWahl.delete(schluessel(auswahl[i]));
+            erkannt = erkannt.filter(v => v !== auswahl[i]);
         });
-        if (gruende.length === 0) {
+        if (gruende.length === 0 && ohneRaum.length === 0) {
             $('erkanntDialog').close();
             return;
         }
         zeichneErkannt(t.keineVorschlaege);
-        $('erkanntFehler').textContent = t.nichtAngelegt(auswahl.length - gruende.length, gruende);
+        $('erkanntFehler').textContent = [
+            gruende.length > 0 ? t.nichtAngelegt(auswahl.length - gruende.length, gruende) : '',
+            ohneRaum.length > 0 ? t.raumNichtUebernommen(ohneRaum) : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
     } catch (fehler) {
         $('erkanntFehler').textContent = fehler.message;
     } finally {
@@ -575,7 +664,7 @@ function oeffne(karte) {
         Object.keys(stand.arten).map(typ => [typ, t.typen[typ] ?? typ]),
         karte?.typ ?? 'schalter',
     );
-    fuelleAuswahl($('raum'), [['', t.ohneRaum], ...stand.raeume.map(r => [r.id, r.name])], karte?.raum ?? '');
+    fuelleAuswahl($('raum'), raumOptionen(), karte?.raum ?? '');
     zeichneTeile();
     $('loeschen').hidden = !karte;
     oeffneDialog(karte ? t.bearbeiten : t.neu);

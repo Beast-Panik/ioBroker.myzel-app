@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "news": {
+            "0.7.0": {
+                "en": "Card suggestions combine parts with the same name from one instance, such as on, brightness and colour of a lamp that ioBroker does not know as one device; a switch with the name of a lamp becomes its on/off, a temperature sensor with the name of a thermostat its actual temperature. Parts in different rooms or overlapping parts stay apart. Each suggestion has a room selection; a changed room is taken over into ioBroker when the card is created",
+                "de": "Kartenvorschläge fassen Teile mit gleichem Namen aus einer Instanz zusammen, etwa An, Helligkeit und Farbe einer Lampe, die ioBroker nicht als ein Gerät kennt; ein Schalter mit dem Namen einer Lampe wird ihr An, ein Temperaturfühler mit dem Namen eines Thermostats seine Isttemperatur. Teile in verschiedenen Räumen oder doppelte Teile bleiben getrennt. Jeder Vorschlag hat eine Raumauswahl; ein geänderter Raum wird beim Anlegen in ioBroker übernommen"
+            },
             "0.6.0": {
                 "en": "Card suggestions: the Cards tab detects devices in ioBroker by their roles with @iobroker/type-detector and offers lamps, switches, thermostats and measurements as cards, by room. Tick what should become a card and create them in one go; devices already in a card are not offered",
                 "de": "Kartenvorschläge: Der Reiter Karten erkennt Geräte in ioBroker an ihren Rollen mit @iobroker/type-detector und bietet Lampen, Schalter, Thermostate und Messwerte als Karten an, nach Räumen. Ankreuzen, was eine Karte werden soll, und alles auf einmal anlegen; Geräte, die schon in einer Karte stehen, fehlen"

@@ -1,6 +1,6 @@
 {
   "name": "iobroker.myzel-app",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "Verbindet die Myzel-App mit ioBroker",
   "author": {
