@@ -2,14 +2,18 @@ import type { Protokoll } from '../basis/grenzen';
 import { type Ordner, appIdAus } from './objekte';
 import {
     type Aufzaehlung,
+    type Etage,
+    type Etagenkopf,
     type Karte,
     type Merkmale,
     type Objektquelle,
     type Profil,
+    alsEtage,
     alsKarte,
     alsProfil,
     istKennung,
     merkmale,
+    text,
 } from './rechte';
 
 // Wie Admin: Englisch, solange im System keine Sprache gesetzt ist
@@ -27,6 +31,10 @@ export interface Katalogquelle {
 const EINTRAEGE = {
     karten: { pruefe: alsKarte, unbrauchbar: (id: string) => `Karte ${id} ist unbrauchbar und fehlt auf den Handys` },
     profile: { pruefe: alsProfil, unbrauchbar: (id: string) => `Profil ${id} ist unbrauchbar und gibt keine Rechte` },
+    etagen: {
+        pruefe: alsEtage,
+        unbrauchbar: (id: string) => `Etage ${id} ist unbrauchbar, ihre Räume stehen ohne Etage`,
+    },
 } satisfies Record<Ordner, { pruefe: (native: unknown) => unknown; unbrauchbar: (id: string) => string }>;
 
 /**
@@ -41,7 +49,12 @@ export class Katalog implements Objektquelle {
     private readonly datenpunkte = new Map<string, Merkmale>();
     private readonly raeumeNachId = new Map<string, Aufzaehlung>();
     private raeumeSortiert?: Aufzaehlung[];
-    private readonly eintraege = { karten: new Map<string, Karte>(), profile: new Map<string, Profil>() };
+    private readonly eintraege = {
+        karten: new Map<string, Karte>(),
+        profile: new Map<string, Profil>(),
+        etagen: new Map<string, Etage>(),
+    };
+    private etagenSortiert?: [string, Etage][];
     private kartenSortiert?: [string, Karte][];
     private profileSortiert?: [string, Profil][];
     private puffer?: [string, Objektaenderung][];
@@ -73,6 +86,7 @@ export class Katalog implements Objektquelle {
                 this.quelle.objekte('enum', 'enum.rooms.'),
                 this.quelle.objekte('config', `${this.namespace}.karten.`),
                 this.quelle.objekte('config', `${this.namespace}.profile.`),
+                this.quelle.objekte('config', `${this.namespace}.etagen.`),
             ]);
             for (const objekt of listen.flat()) {
                 this.uebernimmSicher(objekt._id, objekt);
@@ -124,8 +138,39 @@ export class Katalog implements Objektquelle {
         return this.eintraege.karten.get(kartenId);
     }
 
+    // Von oben nach unten; bei gleicher Position nach Namen, damit die Folge nie vom Zufall des Ladens abhängt
+    public alleEtagen(): [string, Etage][] {
+        this.etagenSortiert ??= [...this.eintraege.etagen].sort(
+            ([a, x], [b, y]) => x.position - y.position || x.name.localeCompare(y.name) || a.localeCompare(b),
+        );
+        return this.etagenSortiert;
+    }
+
+    public etagen(): Etagenkopf[] {
+        return this.alleEtagen().map(([id, e]) => ({ id, name: e.name, kurz: e.kurz }));
+    }
+
+    // Nach Etagen, darin wie im Admin geordnet; ein Raum in zwei Etagen zählt bei der oberen. Räume ohne Etage zuletzt
+    // nach Namen in der Systemsprache, wie die App sie vor Protokoll 5 selbst ordnete.
     public raeume(): Aufzaehlung[] {
-        this.raeumeSortiert ??= [...this.raeumeNachId.values()].sort((a, b) => a.id.localeCompare(b.id));
+        if (!this.raeumeSortiert) {
+            const folge: Aufzaehlung[] = [];
+            const vergeben = new Set<string>();
+            for (const [etage, e] of this.alleEtagen()) {
+                for (const id of e.raeume) {
+                    const raum = this.raeumeNachId.get(id);
+                    if (raum && !vergeben.has(id)) {
+                        vergeben.add(id);
+                        folge.push({ ...raum, etage });
+                    }
+                }
+            }
+            const name = (r: Aufzaehlung): string => text(r.name, this.sprache, r.id);
+            const rest = [...this.raeumeNachId.values()]
+                .filter(r => !vergeben.has(r.id))
+                .sort((a, b) => name(a).localeCompare(name(b), this.sprache) || a.id.localeCompare(b.id));
+            this.raeumeSortiert = [...folge, ...rest];
+        }
         return this.raeumeSortiert;
     }
 
@@ -156,6 +201,8 @@ export class Katalog implements Objektquelle {
                 return false;
             }
             this.sprache = neu;
+            // Räume ohne Etage stehen nach Namen in der Systemsprache
+            this.raeumeSortiert = undefined;
             if (this.datenpunkte.size === 0) {
                 return true;
             }
@@ -171,7 +218,7 @@ export class Katalog implements Objektquelle {
         if (appIdAus(this.namespace, id)) {
             return true;
         }
-        for (const ordner of ['karten', 'profile'] as const) {
+        for (const ordner of ['karten', 'profile', 'etagen'] as const) {
             const praefix = `${this.namespace}.${ordner}.`;
             if (id.startsWith(praefix)) {
                 return this.uebernimmEintrag(ordner, id.slice(praefix.length), objekt);
@@ -201,6 +248,8 @@ export class Katalog implements Objektquelle {
         }
         this.kartenSortiert = undefined;
         this.profileSortiert = undefined;
+        this.etagenSortiert = undefined;
+        this.raeumeSortiert = undefined;
         const eintraege: Map<string, unknown> = this.eintraege[ordner];
         if (objekt?.type !== 'config') {
             return eintraege.delete(id);

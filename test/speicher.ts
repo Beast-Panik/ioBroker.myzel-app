@@ -11,7 +11,7 @@ import {
     LETZTE,
     type Ordner,
 } from '../src/app/objekte';
-import type { Karte, Profil } from '../src/app/rechte';
+import type { Etage, Karte, Profil } from '../src/app/rechte';
 import type { Umstellungsablage } from '../src/app/umstellung';
 import type { Wert, Zustandsquelle } from '../src/app/werte';
 
@@ -41,6 +41,7 @@ export class Speicherablage implements Appablage, Umstellungsablage {
     public readonly eintraege_: Record<Ordner, Map<string, Record<string, unknown>>> = {
         karten: new Map(),
         profile: new Map(),
+        etagen: new Map(),
     };
 
     // Mit quelle wie in ioBroker: Änderungen an Apps und Profilen kommen als objectChange beim Katalog an.
@@ -244,6 +245,9 @@ export class Speicherquelle implements Zustandsquelle, Katalogquelle {
     }
     public karte(kartenId: string, karte: Karte | null): this {
         return this.eintrag('karten', kartenId, karte?.name ?? '', karte);
+    }
+    public etage(etagenId: string, etage: Etage | null): this {
+        return this.eintrag('etagen', etagenId, etage?.name ?? '', etage);
     }
     public eintrag(ordner: Ordner, id: string, name: string, native: object | null): this {
         return this.objekt_(

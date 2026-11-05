@@ -44,7 +44,7 @@ const ungueltigAnAdapter: [string, Record<string, unknown>][] = [
     ['Akku 101', { t: 'akku', stand: 101, laedt: false, zeit }],
     ['Leerzeichen in Rufnummer', { t: 'anruf', status: 'klingelt', nummer: '030 123', zeit }],
     ['Schrägstrich im Paketnamen', { t: 'benachrichtigung', app: 'X', paket: '../etc', zeit }],
-    ['Version 5', { t: 'hallo', v: 5, app: 'abcdefgh', zugang, geraet }],
+    ['Version 6', { t: 'hallo', v: 6, app: 'abcdefgh', zugang, geraet }],
     ['Auswahl mit Schrägstrich im Paketnamen', { t: 'auswahl', apps: [{ paket: '../etc', app: 'X' }] }],
     ['Auswahl ohne Namen', { t: 'auswahl', apps: [{ paket: 'org.signal' }] }],
     ['Auswahl mit leerem Namen', { t: 'auswahl', apps: [{ paket: 'org.signal', app: '' }] }],
@@ -117,6 +117,15 @@ const gueltigAnApp: Record<string, unknown>[] = [
         ],
     },
     rechte([]),
+    {
+        ...rechte([]),
+        raeume: [
+            { id: 'enum.rooms.bad', name: 'Bad', etage: 'og' },
+            { id: 'enum.rooms.flur', name: 'Flur' },
+        ],
+        etagen: [{ id: 'og', name: 'Obergeschoss', kurz: 'OG' }],
+    },
+    { ...rechte([]), etagen: [] },
     { t: 'werte', werte: { 'zigbee.0.lampe.state': { val: true, ack: true, ts: zeit }, 'x.0.leer': null } },
     { t: 'quittung', n: 7, ok: false, fehler: 'rechte' },
     { t: 'hinweis', id: 'Ab3_-xY9', titel: 'Waschmaschine', text: 'Fertig', wichtigkeit: 'normal', zeit },
@@ -127,6 +136,11 @@ const ungueltigAnApp: [string, Record<string, unknown>][] = [
     ['unbekanntes Feld bei zusammengesetzter Nachricht', { ...rechte([]), extra: true }],
     ['rechte ohne Handydaten', { t: 'rechte', profil: 'Gast', raeume: [], karten: [] }],
     ['einzelne Datenpunkte', { ...rechte([]), datenpunkte: [] }],
+    ['Etage ohne Kurzname', { ...rechte([]), etagen: [{ id: 'og', name: 'Obergeschoss' }] }],
+    ['Kurzname zu lang', { ...rechte([]), etagen: [{ id: 'og', name: 'Obergeschoss', kurz: 'OBERGESCH' }] }],
+    ['Etage mit leerem Namen', { ...rechte([]), etagen: [{ id: 'og', name: '', kurz: 'OG' }] }],
+    ['Etage mit fremdem Feld', { ...rechte([]), etagen: [{ id: 'og', name: 'O', kurz: 'OG', farbe: 1 }] }],
+    ['Etage eines Raums keine Kennung', { ...rechte([]), raeume: [{ id: 'enum.rooms.a', name: 'A', etage: 'O G' }] }],
     [
         'keine Adresse',
         {

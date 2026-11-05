@@ -117,7 +117,8 @@ function alsAppDaten(n) {
 }
 const ORDNERNAMEN = {
   karten: { de: "Karten f\xFCr die Apps", en: "Cards for the apps" },
-  profile: { de: "Profile f\xFCr die Apps", en: "Profiles for the apps" }
+  profile: { de: "Profile f\xFCr die Apps", en: "Profiles for the apps" },
+  etagen: { de: "Etagen f\xFCr die Apps", en: "Floors for the apps" }
 };
 class IoBrokerAblage {
   constructor(adapter) {

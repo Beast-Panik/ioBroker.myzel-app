@@ -159,6 +159,8 @@ function uebernimm(neu) {
 const lade = () => ladeStand('profilstand', uebernimm);
 
 const raumname = id => stand.raeume.find(r => r.id === id)?.name;
+// Wie in der App: nach Etagen und der Folge aus dem Reiter „Räume“, Räume ohne Etage nach Namen
+const raumfolge = id => stand.raeume.findIndex(r => r.id === id);
 
 function umfang(sieht) {
     const rechte = Object.values(sieht);
@@ -222,8 +224,7 @@ function waehle(liste, id, wert) {
 }
 
 function zeichneRaeume() {
-    const vergleiche = vergleicher(stand.sprache);
-    const raeume = [...stand.raeume].sort((a, b) => vergleiche(a.name, b.name));
+    const raeume = stand.raeume;
     if (raeume.length === 0) {
         $('raeume').replaceChildren(knoten('p', 'erklaerung', t.keineRaeume));
         return;
@@ -255,9 +256,7 @@ function zeichneKarten() {
         const raum = raumname(karte.raum) === undefined ? '' : karte.raum;
         gruppen.set(raum, [...(gruppen.get(raum) ?? []), karte]);
     }
-    const raeume = [...gruppen.keys()].sort((a, b) =>
-        a === '' ? 1 : b === '' ? -1 : vergleiche(raumname(a), raumname(b)) || (a < b ? -1 : 1),
-    );
+    const raeume = [...gruppen.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : raumfolge(a) - raumfolge(b)));
     const inhalt = [];
     let i = 0;
     for (const raum of raeume) {

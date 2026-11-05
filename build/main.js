@@ -26,6 +26,7 @@ var import_gemeinsam_schema = __toESM(require("../protokoll/v1/gemeinsam.schema.
 var import_geraete = require("./admin/geraete");
 var import_kartenseite = require("./admin/kartenseite");
 var import_profilseite = require("./admin/profilseite");
+var import_raumseite = require("./admin/raumseite");
 var import_katalog = require("./app/katalog");
 var import_objekte = require("./app/objekte");
 var import_rechte = require("./app/rechte");
@@ -71,7 +72,8 @@ class MyzelApp extends utils.Adapter {
     };
     this.seiten = [
       [import_kartenseite.KARTENBEFEHLE, new import_kartenseite.Kartenseite(seite)],
-      [import_profilseite.PROFILBEFEHLE, new import_profilseite.Profilseite(seite)]
+      [import_profilseite.PROFILBEFEHLE, new import_profilseite.Profilseite(seite)],
+      [import_raumseite.RAUMBEFEHLE, new import_raumseite.Raumseite(seite)]
     ];
     try {
       await this.starte();
@@ -145,7 +147,7 @@ class MyzelApp extends utils.Adapter {
       this.log.warn((0, import_geraete.adminOffen)(offen).de);
     }
   }
-  // Die Seiten in den Reitern Karten und Profile (admin/jsonConfig.json)
+  // Die Seiten in den Reitern Karten, Räume und Profile (admin/jsonConfig.json)
   async beantworte(obj) {
     var _a;
     const seite = (_a = this.seiten.find(([befehle]) => befehle.includes(obj == null ? void 0 : obj.command))) == null ? void 0 : _a[1];

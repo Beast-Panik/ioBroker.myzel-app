@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myzel.local/protokoll/app/v1/adapter-an-app.schema.json",
-  "title": "Nachrichten vom Adapter an die App, Protokoll Version 3 und 4",
+  "title": "Nachrichten vom Adapter an die App, Protokoll Version 3 bis 5",
   "description": "Die App prüft streng und trennt bei Verstoß. Neue Felder kommen nur mit einer neuen Protokollversion.",
   "oneOf": [
     { "$ref": "#/$defs/willkommen" },
@@ -176,7 +176,22 @@
       "required": ["id", "name"],
       "properties": {
         "id": { "$ref": "gemeinsam.schema.json#/$defs/objektId" },
-        "name": { "type": "string", "maxLength": 200 }
+        "name": { "type": "string", "maxLength": 200 },
+        "etage": {
+          "description": "Nur ab Protokollversion 5: ID aus etagen; fehlt bei einem Raum ohne Etage",
+          "$ref": "gemeinsam.schema.json#/$defs/kennung"
+        }
+      }
+    },
+    "etage": {
+      "description": "Etage aus dem Admin des Adapters; name für die Überschrift im Kopf, kurz für die Raumleiste",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "kurz"],
+      "properties": {
+        "id": { "$ref": "gemeinsam.schema.json#/$defs/kennung" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "kurz": { "type": "string", "minLength": 1, "maxLength": 8 }
       }
     },
     "rechteInhalt": {
@@ -184,7 +199,17 @@
       "required": ["profil", "raeume", "karten", "handydaten"],
       "properties": {
         "profil": { "type": "string", "maxLength": 60 },
-        "raeume": { "type": "array", "items": { "$ref": "#/$defs/raum" } },
+        "raeume": {
+          "description": "Ab Protokollversion 5 in der Reihenfolge, in der die App sie zeigt: nach Etagen, darin wie im Admin geordnet, Räume ohne Etage zuletzt nach Namen",
+          "type": "array",
+          "items": { "$ref": "#/$defs/raum" }
+        },
+        "etagen": {
+          "description": "Nur ab Protokollversion 5 und dort immer, auch leer: die Etagen mit sichtbaren Räumen, von oben nach unten wie im Admin",
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/etage" }
+        },
         "karten": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/karte" } },
         "handydaten": {
           "description": "Was der Adapter von dieser App annimmt",

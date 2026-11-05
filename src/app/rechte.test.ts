@@ -4,13 +4,16 @@ import { adapterPruefer } from './dienst';
 import {
     KARTENARTEN,
     KARTENTYPEN,
+    type Etage,
     type Karte,
     type Karteneintrag,
     type Profil,
+    alsEtage,
     alsKarte,
     alsProfil,
     bereich,
     berechneRechte,
+    inhaltFuer,
     kartenmaengel,
     rechteFuer,
 } from './rechte';
@@ -240,11 +243,100 @@ describe('Rechte aus Profilen', () => {
         expect(inhalt.karten.find(k => k.id === 'weg')).to.not.have.property('raum');
     });
 
+    describe('Etagen', () => {
+        const etage = (name: string, kurz: string, position: number, raeume: string[]): Etage => ({
+            name,
+            kurz,
+            position,
+            raeume,
+        });
+        const haus = (): ReturnType<typeof welt> =>
+            welt()
+                .raum('kueche', 'Küche', [])
+                .raum('bad', 'Bad', [])
+                .karte('kueche', lampe({ schalten: 'z.0.l.an' }, 'enum.rooms.kueche'))
+                .karte('bad', lampe({ schalten: 'z.0.l.an' }, 'enum.rooms.bad'));
+        const alle = profil({
+            raeume: ['wohnzimmer', 'flur', 'kueche', 'bad'].map(r => ({
+                enum: `enum.rooms.${r}`,
+                recht: 'lesen' as const,
+            })),
+        });
+
+        it('Räume nach Etagen und deren Folge, ein Raum in zwei Etagen bei der oberen, die übrigen nach Namen', () => {
+            const q = haus()
+                .etage('og', etage('Obergeschoss', 'OG', 0, ['enum.rooms.bad', 'enum.rooms.kueche']))
+                .etage('eg', etage('Erdgeschoss', 'EG', 1, ['enum.rooms.kueche', 'enum.rooms.flur', 'enum.rooms.weg']));
+            const { inhalt } = berechneRechte(alle, q.katalog);
+            expect(inhalt.raeume).to.deep.equal([
+                { id: 'enum.rooms.bad', name: 'Bad', etage: 'og' },
+                { id: 'enum.rooms.kueche', name: 'Küche', etage: 'og' },
+                { id: 'enum.rooms.flur', name: 'Hall', etage: 'eg' },
+                { id: 'enum.rooms.wohnzimmer', name: 'Wohnzimmer' },
+            ]);
+            expect(inhalt.etagen).to.deep.equal([
+                { id: 'og', name: 'Obergeschoss', kurz: 'OG' },
+                { id: 'eg', name: 'Erdgeschoss', kurz: 'EG' },
+            ]);
+        });
+
+        it('nur Etagen mit sichtbaren Räumen; ohne Etagen alle Räume nach Namen', () => {
+            const ohne = berechneRechte(alle, haus().katalog).inhalt;
+            expect(ohne.raeume.map(r => r.name)).to.deep.equal(['Bad', 'Hall', 'Küche', 'Wohnzimmer']);
+            expect(ohne.etagen).to.deep.equal([]);
+            const q = haus()
+                .etage('eg', etage('Erdgeschoss', 'EG', 0, ['enum.rooms.flur']))
+                .etage('keller', etage('Keller', 'KG', 1, ['enum.rooms.gibtsnicht']));
+            expect(berechneRechte(profil({ raeume: wohnzimmer() }), q.katalog).inhalt.etagen).to.deep.equal([]);
+            expect(berechneRechte(alle, q.katalog).inhalt.etagen?.map(e => e.id)).to.deep.equal(['eg']);
+        });
+
+        it('Apps vor Protokoll 5 bekommen weder Etagen noch Etage am Raum', () => {
+            const q = haus().etage('eg', etage('Erdgeschoss', 'EG', 0, ['enum.rooms.flur']));
+            const { inhalt } = berechneRechte(alle, q.katalog);
+            for (const v of [3, 4]) {
+                const alt = inhaltFuer(inhalt, v);
+                expect(alt).to.not.have.property('etagen');
+                expect(alt.raeume.every(r => !('etage' in r))).to.equal(true);
+                expect(alt.karten).to.equal(inhalt.karten);
+            }
+            expect(inhaltFuer(inhalt, 5)).to.equal(inhalt);
+        });
+
+        it('unbrauchbare Etagen fehlen', () => {
+            for (const falsch of [
+                {},
+                etage('', 'EG', 0, []),
+                etage('  ', 'EG', 0, []),
+                etage('Erdgeschoss', 'ERDGESCHO', 0, []),
+                etage('Erdgeschoss', 'EG', -1, []),
+                etage('Erdgeschoss', 'EG', 0.5, []),
+                etage('Erdgeschoss', 'EG', 0, ['enum.functions.licht']),
+                etage('Erdgeschoss', 'EG', 0, ['enum.rooms.a', 'enum.rooms.a']),
+            ]) {
+                expect(Array.isArray(alsEtage(falsch)), JSON.stringify(falsch)).to.equal(true);
+            }
+            expect(alsEtage(etage('Erdgeschoss', 'EG', 0, ['enum.rooms.a']))).to.not.be.an('array');
+            const q = haus().etage('kaputt', {
+                name: '',
+                kurz: 'X',
+                position: 0,
+                raeume: ['enum.rooms.flur'],
+            });
+            expect(berechneRechte(alle, q.katalog).inhalt.etagen).to.deep.equal([]);
+        });
+    });
+
     it('ohne Profil oder mit ungültiger Profil-ID gibt es keine Rechte', () => {
         const q = welt().profil('familie', profil({ raeume: wohnzimmer() }));
         expect(rechteFuer('familie', q.katalog).inhalt.karten).to.have.length(1);
         for (const id of ['', 'gibtsnicht', '../familie', 'Familie']) {
-            expect(rechteFuer(id, q.katalog).inhalt, id).to.deep.equal({ profil: '', raeume: [], karten: [] });
+            expect(rechteFuer(id, q.katalog).inhalt, id).to.deep.equal({
+                profil: '',
+                raeume: [],
+                etagen: [],
+                karten: [],
+            });
         }
     });
 

@@ -43,6 +43,7 @@ async function main(): Promise<void> {
         )
         .datenpunkt('zigbee.0.tuer.offen', { type: 'boolean' }, false)
         .raum('wohnzimmer', { de: 'Wohnzimmer', en: 'Living room' }, [])
+        .etage('eg', { name: 'Erdgeschoss', kurz: 'EG', position: 0, raeume: ['enum.rooms.wohnzimmer'] })
         .karte('wohnzimmerlampe', {
             name: 'Wohnzimmerlampe',
             typ: 'lampe',

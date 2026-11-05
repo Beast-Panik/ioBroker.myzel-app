@@ -4,6 +4,7 @@ import { type Betrieb, Geraete, Verwaltung, adminOffen } from './admin/geraete';
 import type { Ablehnung } from './admin/eintraege';
 import { KARTENBEFEHLE, Kartenseite } from './admin/kartenseite';
 import { PROFILBEFEHLE, Profilseite } from './admin/profilseite';
+import { RAUMBEFEHLE, Raumseite } from './admin/raumseite';
 import { Katalog } from './app/katalog';
 import { IoBrokerAblage, IoBrokerQuelle } from './app/objekte';
 import { kartenmaengel } from './app/rechte';
@@ -22,7 +23,7 @@ class MyzelApp extends utils.Adapter {
     private server?: Server;
     private katalog?: Katalog;
     private betrieb?: Betrieb;
-    private seiten: [readonly string[], Kartenseite | Profilseite][] = [];
+    private seiten: [readonly string[], Kartenseite | Profilseite | Raumseite][] = [];
     private beendet = false;
 
     public constructor(options: Partial<utils.AdapterOptions> = {}) {
@@ -50,6 +51,7 @@ class MyzelApp extends utils.Adapter {
         this.seiten = [
             [KARTENBEFEHLE, new Kartenseite(seite)],
             [PROFILBEFEHLE, new Profilseite(seite)],
+            [RAUMBEFEHLE, new Raumseite(seite)],
         ];
         try {
             await this.starte();
@@ -129,7 +131,7 @@ class MyzelApp extends utils.Adapter {
         }
     }
 
-    // Die Seiten in den Reitern Karten und Profile (admin/jsonConfig.json)
+    // Die Seiten in den Reitern Karten, Räume und Profile (admin/jsonConfig.json)
     private async beantworte(obj: ioBroker.Message): Promise<void> {
         const seite = this.seiten.find(([befehle]) => befehle.includes(obj?.command))?.[1];
         if (!obj?.callback || !seite) {

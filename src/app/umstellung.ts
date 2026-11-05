@@ -2,7 +2,7 @@ import type { Protokoll } from '../basis/grenzen';
 import type { Katalogquelle } from './katalog';
 import { karteAusZeile, lies, profilAusZeile } from './konfiguration';
 import type { Eintragsablage, Ordner } from './objekte';
-import { KARTENARTEN, alsKarte, alsProfil, istKennung, liegtUnter } from './rechte';
+import { KARTENARTEN, alsEtage, alsKarte, alsProfil, istKennung, liegtUnter } from './rechte';
 
 const LAMPENTEILE = Object.keys(KARTENARTEN.lampe.teile);
 
@@ -16,6 +16,7 @@ export interface Umstellungsablage extends Eintragsablage {
 const BRAUCHBAR: Record<Ordner, (native: unknown) => boolean> = {
     karten: native => !Array.isArray(alsKarte(native)),
     profile: native => !Array.isArray(alsProfil(native)),
+    etagen: native => !Array.isArray(alsEtage(native)),
 };
 
 /**

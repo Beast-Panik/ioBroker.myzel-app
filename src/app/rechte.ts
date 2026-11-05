@@ -72,6 +72,20 @@ export interface Karte {
 }
 
 export const KARTEN_HOECHSTENS = adapterAnApp.$defs.rechteInhalt.properties.karten.maxItems;
+export const ETAGEN_HOECHSTENS = adapterAnApp.$defs.rechteInhalt.properties.etagen.maxItems;
+export const ETAGENNAME_LAENGE = adapterAnApp.$defs.etage.properties.name.maxLength;
+export const ETAGENKURZ_LAENGE = adapterAnApp.$defs.etage.properties.kurz.maxLength;
+
+// Ab dieser Protokollversion kennt die App Etagen und zeigt die Räume in der Reihenfolge des Adapters
+export const ETAGEN_SEIT = 5;
+
+// Eine Etage als Objekt <namespace>.etagen.<id>: position ordnet die Etagen von oben nach unten, raeume die Räume darin.
+export interface Etage {
+    name: string;
+    kurz: string;
+    position: number;
+    raeume: string[];
+}
 export const NAME_LAENGE = 200;
 export const BEZEICHNUNG_LAENGE = 60;
 export const PROFILNAME_LAENGE = 60;
@@ -80,6 +94,15 @@ export interface Aufzaehlung {
     id: string;
     name: ioBroker.StringOrTranslated;
     mitglieder: string[];
+    // ID der Etage, in der der Raum steht
+    etage?: string;
+}
+
+// Was die App von einer Etage braucht
+export interface Etagenkopf {
+    id: string;
+    name: string;
+    kurz: string;
 }
 
 const MERKMALE = ['name', 'type', 'unit', 'min', 'max', 'step', 'states', 'write'] as const;
@@ -111,8 +134,10 @@ export interface Objektquelle {
     profil(profilId: string): Profil | undefined;
     // Nach ID sortiert
     karten(): [string, Karte][];
-    // Nach ID sortiert
+    // Nach Etagen, darin wie im Admin geordnet; Räume ohne Etage zuletzt nach Namen
     raeume(): Aufzaehlung[];
+    // Von oben nach unten
+    etagen(): Etagenkopf[];
     datenpunkt(id: string): Merkmale | undefined;
 }
 
@@ -139,12 +164,23 @@ export interface Karteneintrag {
 export interface Raum {
     id: string;
     name: string;
+    etage?: string;
 }
 
 export interface Rechteinhalt {
     profil: string;
     raeume: Raum[];
+    etagen?: Etagenkopf[];
     karten: Karteneintrag[];
+}
+
+// Apps vor Protokoll 5 trennen bei unbekannten Feldern; sie bekommen Räume ohne Etage und keine Etagen.
+export function inhaltFuer(inhalt: Rechteinhalt, version: number): Rechteinhalt {
+    if (version >= ETAGEN_SEIT) {
+        return inhalt;
+    }
+    const { etagen: _etagen, ...rest } = inhalt;
+    return { ...rest, raeume: inhalt.raeume.map(({ etage: _etage, ...raum }) => raum) };
 }
 
 const RANG: Record<Recht, number> = { lesen: 1, schreiben: 2 };
@@ -179,6 +215,35 @@ const pruefeProfil = erstellePruefer(
     },
     [gemeinsam],
 );
+
+const pruefeEtage = erstellePruefer(
+    {
+        type: 'object',
+        required: ['name', 'kurz', 'position', 'raeume'],
+        properties: {
+            name: { type: 'string', minLength: 1, maxLength: ETAGENNAME_LAENGE, pattern: '\\S' },
+            kurz: { type: 'string', minLength: 1, maxLength: ETAGENKURZ_LAENGE, pattern: '\\S' },
+            position: { type: 'integer', minimum: 0, maximum: 1000 },
+            raeume: {
+                type: 'array',
+                maxItems: 1000,
+                uniqueItems: true,
+                items: {
+                    allOf: [
+                        { $ref: `${gemeinsam.$id}#/$defs/objektId` },
+                        { type: 'string', pattern: '^enum\\.rooms\\.' },
+                    ],
+                },
+            },
+        },
+    },
+    [gemeinsam],
+);
+
+export function alsEtage(native: unknown): Etage | string[] {
+    const fehler = pruefeEtage(native);
+    return fehler.length > 0 ? fehler : (native as Etage);
+}
 
 export function alsProfil(native: unknown): Profil | string[] {
     const fehler = pruefeProfil(native);
@@ -431,7 +496,7 @@ export class Rechtestand {
     }
 
     public static leer(): Rechtestand {
-        return new Rechtestand({ profil: '', raeume: [], karten: [] });
+        return new Rechtestand({ profil: '', raeume: [], etagen: [], karten: [] });
     }
 }
 
@@ -480,11 +545,18 @@ export function berechneRechte(profil: Profil, quelle: Objektquelle): Rechtestan
     }
 
     const sichtbar = new Set(karten.map(k => k.raum));
+    const sichtbareRaeume = [...raeume.values()]
+        .filter(r => sichtbar.has(r.id) && pruefeObjektId(r.id).length === 0)
+        .map(r => ({
+            id: r.id,
+            name: text(r.name, quelle.sprache, r.id).slice(0, NAME_LAENGE),
+            ...(r.etage ? { etage: r.etage } : {}),
+        }));
+    const mitRaum = new Set(sichtbareRaeume.map(r => r.etage));
     return new Rechtestand({
         profil: profil.name,
-        raeume: [...raeume.values()]
-            .filter(r => sichtbar.has(r.id) && pruefeObjektId(r.id).length === 0)
-            .map(r => ({ id: r.id, name: text(r.name, quelle.sprache, r.id).slice(0, NAME_LAENGE) })),
+        raeume: sichtbareRaeume,
+        etagen: quelle.etagen().filter(e => mitRaum.has(e.id)),
         karten,
     });
 }

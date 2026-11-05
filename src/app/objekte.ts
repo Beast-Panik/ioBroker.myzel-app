@@ -191,11 +191,12 @@ function alsAppDaten(n: Record<string, any>): AppDaten | undefined {
         : undefined;
 }
 
-// Karten und Profile liegen als Objekte <ordner>.<id> vom Typ config, native ist die Karte oder das Profil.
-export type Ordner = 'karten' | 'profile';
+// Karten, Profile und Etagen liegen als Objekte <ordner>.<id> vom Typ config, native ist der Eintrag.
+export type Ordner = 'karten' | 'profile' | 'etagen';
 const ORDNERNAMEN: Record<Ordner, ioBroker.StringOrTranslated> = {
     karten: { de: 'Karten für die Apps', en: 'Cards for the apps' },
     profile: { de: 'Profile für die Apps', en: 'Profiles for the apps' },
+    etagen: { de: 'Etagen für die Apps', en: 'Floors for the apps' },
 };
 
 // Eigene Schnittstelle, damit Seiten und Umstellung ohne ioBroker testbar sind.

@@ -237,6 +237,76 @@ body {
     height: 16px;
 }
 
+/* Raumseite: Etagen mit Kurznamen, Räume zum Ziehen */
+.etage h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.etage h2 .anzahl {
+    margin-left: 0;
+}
+
+.etage h2 .bearbeiten {
+    min-height: 32px;
+    margin-left: auto;
+    padding: 4px;
+    border-color: transparent;
+    color: var(--leise);
+}
+
+.kurz {
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--flaeche-hover);
+    color: var(--leise);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+
+.raumkachel {
+    grid-template-columns: auto 1fr;
+    cursor: default;
+}
+
+.raumkachel[draggable='true'] {
+    cursor: grab;
+}
+
+.raumkachel.zieht {
+    opacity: 0.4;
+}
+
+.raumkachel.davor {
+    box-shadow: -4px 0 0 var(--haupt);
+}
+
+.kacheln.raeume {
+    min-height: 62px;
+    border-radius: 12px;
+}
+
+.kacheln.raeume.ziel {
+    outline: 2px dashed var(--haupt);
+    outline-offset: 5px;
+}
+
+.platzhalter {
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 18px;
+    border: 1px dashed var(--rand);
+    border-radius: 10px;
+    color: var(--leise);
+}
+
+.zeile > .kurzfeld {
+    flex: 0 1 120px;
+}
+
 .leer {
     margin-top: 32px;
     color: var(--leise);

@@ -233,7 +233,7 @@ class Dienst {
       v: version,
       adapter: this.o.adapterId,
       adressen,
-      ...rechte.inhalt,
+      ...(0, import_rechte.inhaltFuer)(rechte.inhalt, version),
       handydaten: daten.handydaten
     });
     this.o.log.info(`App ${appId} verbunden \xFCber ${v.herkunft.weg} von ${v.herkunft.adresse}`);
@@ -268,7 +268,8 @@ class Dienst {
       }
       const rechte = (_a = jeProfil.get(daten.profil)) != null ? _a : (0, import_rechte.rechteFuer)(daten.profil, this.o.katalog);
       jeProfil.set(daten.profil, rechte);
-      const rechteNeu = !(0, import_node_util.isDeepStrictEqual)(rechte.inhalt, werte.rechte.inhalt);
+      const fuerApp = (0, import_rechte.inhaltFuer)(rechte.inhalt, angemeldet.version);
+      const rechteNeu = !(0, import_node_util.isDeepStrictEqual)(fuerApp, (0, import_rechte.inhaltFuer)(werte.rechte.inhalt, angemeldet.version));
       if (!rechteNeu && (0, import_node_util.isDeepStrictEqual)(daten.handydaten, handy.handydaten)) {
         continue;
       }
@@ -276,7 +277,7 @@ class Dienst {
         werte.neueRechte(rechte).catch((fehler) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
       }
       handy.handydaten = daten.handydaten;
-      sitzung.verbindung.sende({ t: "rechte", ...rechte.inhalt, handydaten: daten.handydaten });
+      sitzung.verbindung.sende({ t: "rechte", ...fuerApp, handydaten: daten.handydaten });
       this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
     }
   }

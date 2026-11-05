@@ -1,5 +1,5 @@
-// Gemeinsam für die Seiten in den Reitern „Karten“ und „Profile“ der Instanzeinstellungen (KONZEPT-KARTEN.md, Abschnitt
-// 12): Verbindung zur Instanz, Thema, Texte, Kacheln, Dialog. Die Seiten zeigen nur und fragen; prüfen und speichern tut
+// Gemeinsam für die Seiten in den Reitern „Karten“, „Räume“ und „Profile“ der Instanzeinstellungen (KONZEPT-KARTEN.md,
+// Abschnitte 12 und 13): Verbindung zur Instanz, Thema, Texte, Kacheln, Dialog. Die Seiten zeigen nur und fragen; prüfen und speichern tut
 // die Instanz über sendTo (src/admin/).
 
 export const instanz = new URLSearchParams(location.search).get('instanz');
@@ -40,6 +40,7 @@ const SYMBOLE = {
     messwert: 'M4.5 17a8 8 0 1 1 15 0M12 14l3.5-4.5M12 14h.01',
     thermostat: 'M10 13.5V5a2 2 0 1 1 4 0v8.5a4 4 0 1 1-4 0zM12 9v6',
     profil: 'M12 12a4 4 0 1 0 0-8a4 4 0 1 0 0 8zM4.5 21a7.5 7.5 0 0 1 15 0',
+    raum: 'M4 20V10l8-6 8 6v10M4 20h16M10 20v-5h4v5',
     zahnrad:
         'M19 9.8L21.5 10.4L21.5 13.6L19 14.2L18.5 15.4L19.8 17.5L17.5 19.8L15.4 18.5L14.2 19L13.6 21.5L10.4 21.5' +
         'L9.8 19L8.6 18.5L6.5 19.8L4.2 17.5L5.5 15.4L5 14.2L2.5 13.6L2.5 10.4L5 9.8L5.5 8.6L4.2 6.5L6.5 4.2L8.6 5.5' +

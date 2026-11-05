@@ -12,7 +12,7 @@ import { Anwesenheit, Handyeingang } from './handydaten';
 import { Hinweise } from './hinweise';
 import type { Katalog } from './katalog';
 import { type AppDaten, type Appablage, appIdAus } from './objekte';
-import { type Rechtestand, rechteFuer } from './rechte';
+import { type Rechtestand, inhaltFuer, rechteFuer } from './rechte';
 import { Sitzung } from './sitzung';
 import { Abostelle, type Wert, Werteversand, type Zustandsquelle } from './werte';
 
@@ -240,7 +240,7 @@ export class Dienst implements Anmeldeziel {
             v: version,
             adapter: this.o.adapterId,
             adressen,
-            ...rechte.inhalt,
+            ...inhaltFuer(rechte.inhalt, version),
             handydaten: daten.handydaten,
         });
         this.o.log.info(`App ${appId} verbunden über ${v.herkunft.weg} von ${v.herkunft.adresse}`);
@@ -277,7 +277,9 @@ export class Dienst implements Anmeldeziel {
             }
             const rechte = jeProfil.get(daten.profil) ?? rechteFuer(daten.profil, this.o.katalog);
             jeProfil.set(daten.profil, rechte);
-            const rechteNeu = !isDeepStrictEqual(rechte.inhalt, werte.rechte.inhalt);
+            // Verglichen wird, was die App bekäme: Eine neue Etage ändert für eine App vor Protokoll 5 nichts.
+            const fuerApp = inhaltFuer(rechte.inhalt, angemeldet.version);
+            const rechteNeu = !isDeepStrictEqual(fuerApp, inhaltFuer(werte.rechte.inhalt, angemeldet.version));
             if (!rechteNeu && isDeepStrictEqual(daten.handydaten, handy.handydaten)) {
                 continue;
             }
@@ -287,7 +289,7 @@ export class Dienst implements Anmeldeziel {
                     .catch((fehler: Error) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
             }
             handy.handydaten = daten.handydaten;
-            sitzung.verbindung.sende({ t: 'rechte', ...rechte.inhalt, handydaten: daten.handydaten });
+            sitzung.verbindung.sende({ t: 'rechte', ...fuerApp, handydaten: daten.handydaten });
             this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
         }
     }

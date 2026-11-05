@@ -26,7 +26,8 @@ var import_rechte = require("./rechte");
 const LAMPENTEILE = Object.keys(import_rechte.KARTENARTEN.lampe.teile);
 const BRAUCHBAR = {
   karten: (native) => !Array.isArray((0, import_rechte.alsKarte)(native)),
-  profile: (native) => !Array.isArray((0, import_rechte.alsProfil)(native))
+  profile: (native) => !Array.isArray((0, import_rechte.alsProfil)(native)),
+  etagen: (native) => !Array.isArray((0, import_rechte.alsEtage)(native))
 };
 async function stelleUm(namespace, quelle, einstellungen, ablage, log) {
   const loeschen = [];

@@ -35,6 +35,24 @@
                 }
             }
         },
+        "_reiterRaeume": {
+            "type": "panel",
+            "label": "Rooms",
+            "items": {
+                "_raeumeAus": {
+                    "type": "staticText",
+                    "text": "Rooms page offline",
+                    "hidden": "_alive",
+                    "xs": 12
+                },
+                "_raumseite": {
+                    "type": "iframeSendTo",
+                    "command": "raumseite",
+                    "xs": 12,
+                    "style": { "height": "calc(100vh - 220px)", "minHeight": "420px" }
+                }
+            }
+        },
         "_reiterProfile": {
             "type": "panel",
             "label": "Profiles",

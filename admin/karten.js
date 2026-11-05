@@ -142,6 +142,8 @@ function uebernimm(neu) {
 const lade = () => ladeStand('kartenstand', uebernimm);
 
 const raumname = id => stand.raeume.find(r => r.id === id)?.name;
+// Wie in der App: nach Etagen und der Folge aus dem Reiter „Räume“, Räume ohne Etage nach Namen
+const raumfolge = id => stand.raeume.findIndex(r => r.id === id);
 
 function mangeltext(m) {
     return m.art === 'typ' ? t.mangel.typ(m.ist, m.erwartet) : t.mangel[m.art];
@@ -163,7 +165,8 @@ function kartenkachel(karte) {
     });
 }
 
-// Wie die App: nach Raumnamen, Karten ohne Raum oder mit einem Raum, den es nicht mehr gibt, zuletzt; im Raum nach Namen
+// Wie die App: nach der Folge der Räume, Karten ohne Raum oder mit einem Raum, den es nicht mehr gibt, zuletzt; im Raum
+// nach Namen
 function zeichne() {
     const liste = $('liste');
     liste.replaceChildren();
@@ -177,9 +180,7 @@ function zeichne() {
         const raum = raumname(karte.raum) === undefined ? '' : karte.raum;
         gruppen.set(raum, [...(gruppen.get(raum) ?? []), karte]);
     }
-    const raeume = [...gruppen.keys()].sort((a, b) =>
-        a === '' ? 1 : b === '' ? -1 : vergleiche(raumname(a), raumname(b)) || (a < b ? -1 : 1),
-    );
+    const raeume = [...gruppen.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : raumfolge(a) - raumfolge(b)));
     for (const raum of raeume) {
         const karten = gruppen.get(raum).sort((a, b) => vergleiche(a.name, b.name) || (a.id < b.id ? -1 : 1));
         liste.append(abschnitt(raum ? raumname(raum) : t.ohneRaum, karten.map(kartenkachel)));
@@ -372,9 +373,7 @@ function oeffne(karte) {
         Object.keys(stand.arten).map(typ => [typ, t.typen[typ] ?? typ]),
         karte?.typ ?? 'schalter',
     );
-    const vergleiche = vergleicher(stand.sprache);
-    const raeume = [...stand.raeume].sort((a, b) => vergleiche(a.name, b.name));
-    fuelleAuswahl($('raum'), [['', t.ohneRaum], ...raeume.map(r => [r.id, r.name])], karte?.raum ?? '');
+    fuelleAuswahl($('raum'), [['', t.ohneRaum], ...stand.raeume.map(r => [r.id, r.name])], karte?.raum ?? '');
     zeichneTeile();
     $('loeschen').hidden = !karte;
     oeffneDialog(karte ? t.bearbeiten : t.neu);

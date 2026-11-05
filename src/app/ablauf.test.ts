@@ -371,12 +371,21 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
 
     it('andere Protokollversion: fehler version mit den unterstützten Versionen und 4002', async () => {
         const g = await verbinde();
-        g.sende({ t: 'hallo', v: 5, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
+        g.sende({ t: 'hallo', v: 6, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
         const fehler = await erwarteFehler(g, 'version', SCHLIESSCODE.version);
-        expect(fehler.unterstuetzt).to.deep.equal([3, 4]);
+        expect(fehler.unterstuetzt).to.deep.equal([3, 4, 5]);
         const alt = await verbinde();
         alt.sende({ t: 'koppeln', v: 2, geheimnis: 'A'.repeat(22), name: 'X', geraet });
-        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4]);
+        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4, 5]);
+    });
+
+    it('Etagen nur für Apps ab Version 5, auch leer; ältere bekommen keine', async () => {
+        const neu = await kopple('familie', 5);
+        expect(neu.willkommen).to.include({ v: 5 }).and.have.deep.property('etagen', []);
+        neu.g.schliesse();
+        const alt = await kopple('familie', 4);
+        expect(alt.willkommen).to.not.have.property('etagen');
+        alt.g.schliesse();
     });
 
     it('spricht Version 3 und 4 und antwortet in der Version der App', async () => {

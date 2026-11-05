@@ -29,16 +29,22 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var rechte_exports = {};
 __export(rechte_exports, {
   BEZEICHNUNG_LAENGE: () => BEZEICHNUNG_LAENGE,
+  ETAGENKURZ_LAENGE: () => ETAGENKURZ_LAENGE,
+  ETAGENNAME_LAENGE: () => ETAGENNAME_LAENGE,
+  ETAGEN_HOECHSTENS: () => ETAGEN_HOECHSTENS,
+  ETAGEN_SEIT: () => ETAGEN_SEIT,
   KARTENARTEN: () => KARTENARTEN,
   KARTENTYPEN: () => KARTENTYPEN,
   KARTEN_HOECHSTENS: () => KARTEN_HOECHSTENS,
   NAME_LAENGE: () => NAME_LAENGE,
   PROFILNAME_LAENGE: () => PROFILNAME_LAENGE,
   Rechtestand: () => Rechtestand,
+  alsEtage: () => alsEtage,
   alsKarte: () => alsKarte,
   alsProfil: () => alsProfil,
   berechneRechte: () => berechneRechte,
   bereich: () => bereich,
+  inhaltFuer: () => inhaltFuer,
   istKennung: () => istKennung,
   istPersoenlich: () => istPersoenlich,
   kartenmaengel: () => kartenmaengel,
@@ -81,6 +87,10 @@ const KARTENARTEN = {
 };
 const KARTENTYPEN = Object.keys(KARTENARTEN);
 const KARTEN_HOECHSTENS = import_adapter_an_app_schema.default.$defs.rechteInhalt.properties.karten.maxItems;
+const ETAGEN_HOECHSTENS = import_adapter_an_app_schema.default.$defs.rechteInhalt.properties.etagen.maxItems;
+const ETAGENNAME_LAENGE = import_adapter_an_app_schema.default.$defs.etage.properties.name.maxLength;
+const ETAGENKURZ_LAENGE = import_adapter_an_app_schema.default.$defs.etage.properties.kurz.maxLength;
+const ETAGEN_SEIT = 5;
 const NAME_LAENGE = 200;
 const BEZEICHNUNG_LAENGE = 60;
 const PROFILNAME_LAENGE = 60;
@@ -96,6 +106,13 @@ function merkmale(id, common, sprache) {
   );
   const ziele = aliasziele(common == null ? void 0 : common.alias);
   return { ...felder, name: text(common == null ? void 0 : common.name, sprache, id), ...ziele.length > 0 ? { ziele } : {} };
+}
+function inhaltFuer(inhalt, version) {
+  if (version >= ETAGEN_SEIT) {
+    return inhalt;
+  }
+  const { etagen: _etagen, ...rest } = inhalt;
+  return { ...rest, raeume: inhalt.raeume.map(({ etage: _etage, ...raum }) => raum) };
 }
 const RANG = { lesen: 1, schreiben: 2 };
 const FEST_GESPERRT = ["system"];
@@ -126,6 +143,33 @@ const pruefeProfil = (0, import_schema.erstellePruefer)(
   },
   [import_gemeinsam_schema.default]
 );
+const pruefeEtage = (0, import_schema.erstellePruefer)(
+  {
+    type: "object",
+    required: ["name", "kurz", "position", "raeume"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: ETAGENNAME_LAENGE, pattern: "\\S" },
+      kurz: { type: "string", minLength: 1, maxLength: ETAGENKURZ_LAENGE, pattern: "\\S" },
+      position: { type: "integer", minimum: 0, maximum: 1e3 },
+      raeume: {
+        type: "array",
+        maxItems: 1e3,
+        uniqueItems: true,
+        items: {
+          allOf: [
+            { $ref: `${import_gemeinsam_schema.default.$id}#/$defs/objektId` },
+            { type: "string", pattern: "^enum\\.rooms\\." }
+          ]
+        }
+      }
+    }
+  },
+  [import_gemeinsam_schema.default]
+);
+function alsEtage(native) {
+  const fehler = pruefeEtage(native);
+  return fehler.length > 0 ? fehler : native;
+}
 function alsProfil(native) {
   const fehler = pruefeProfil(native);
   return fehler.length > 0 ? fehler : native;
@@ -315,7 +359,7 @@ class Rechtestand {
     return this.rechte.size;
   }
   static leer() {
-    return new Rechtestand({ profil: "", raeume: [], karten: [] });
+    return new Rechtestand({ profil: "", raeume: [], etagen: [], karten: [] });
   }
 }
 const istPersoenlich = (karte, quelle) => Object.values(karte.teile).some((dp) => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]));
@@ -355,9 +399,16 @@ function berechneRechte(profil, quelle) {
     }
   }
   const sichtbar = new Set(karten.map((k) => k.raum));
+  const sichtbareRaeume = [...raeume.values()].filter((r) => sichtbar.has(r.id) && pruefeObjektId(r.id).length === 0).map((r) => ({
+    id: r.id,
+    name: text(r.name, quelle.sprache, r.id).slice(0, NAME_LAENGE),
+    ...r.etage ? { etage: r.etage } : {}
+  }));
+  const mitRaum = new Set(sichtbareRaeume.map((r) => r.etage));
   return new Rechtestand({
     profil: profil.name,
-    raeume: [...raeume.values()].filter((r) => sichtbar.has(r.id) && pruefeObjektId(r.id).length === 0).map((r) => ({ id: r.id, name: text(r.name, quelle.sprache, r.id).slice(0, NAME_LAENGE) })),
+    raeume: sichtbareRaeume,
+    etagen: quelle.etagen().filter((e) => mitRaum.has(e.id)),
     karten
   });
 }
@@ -383,16 +434,22 @@ function kartenEintrag(id, karte, recht, raum, quelle) {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   BEZEICHNUNG_LAENGE,
+  ETAGENKURZ_LAENGE,
+  ETAGENNAME_LAENGE,
+  ETAGEN_HOECHSTENS,
+  ETAGEN_SEIT,
   KARTENARTEN,
   KARTENTYPEN,
   KARTEN_HOECHSTENS,
   NAME_LAENGE,
   PROFILNAME_LAENGE,
   Rechtestand,
+  alsEtage,
   alsKarte,
   alsProfil,
   berechneRechte,
   bereich,
+  inhaltFuer,
   istKennung,
   istPersoenlich,
   kartenmaengel,

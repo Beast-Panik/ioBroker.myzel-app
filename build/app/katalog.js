@@ -26,7 +26,11 @@ var import_rechte = require("./rechte");
 const SPRACHE = "en";
 const EINTRAEGE = {
   karten: { pruefe: import_rechte.alsKarte, unbrauchbar: (id) => `Karte ${id} ist unbrauchbar und fehlt auf den Handys` },
-  profile: { pruefe: import_rechte.alsProfil, unbrauchbar: (id) => `Profil ${id} ist unbrauchbar und gibt keine Rechte` }
+  profile: { pruefe: import_rechte.alsProfil, unbrauchbar: (id) => `Profil ${id} ist unbrauchbar und gibt keine Rechte` },
+  etagen: {
+    pruefe: import_rechte.alsEtage,
+    unbrauchbar: (id) => `Etage ${id} ist unbrauchbar, ihre R\xE4ume stehen ohne Etage`
+  }
 };
 class Katalog {
   constructor(namespace, log, quelle) {
@@ -40,7 +44,12 @@ class Katalog {
   datenpunkte = /* @__PURE__ */ new Map();
   raeumeNachId = /* @__PURE__ */ new Map();
   raeumeSortiert;
-  eintraege = { karten: /* @__PURE__ */ new Map(), profile: /* @__PURE__ */ new Map() };
+  eintraege = {
+    karten: /* @__PURE__ */ new Map(),
+    profile: /* @__PURE__ */ new Map(),
+    etagen: /* @__PURE__ */ new Map()
+  };
+  etagenSortiert;
   kartenSortiert;
   profileSortiert;
   puffer;
@@ -60,7 +69,8 @@ class Katalog {
         this.quelle.objekte("state", ""),
         this.quelle.objekte("enum", "enum.rooms."),
         this.quelle.objekte("config", `${this.namespace}.karten.`),
-        this.quelle.objekte("config", `${this.namespace}.profile.`)
+        this.quelle.objekte("config", `${this.namespace}.profile.`),
+        this.quelle.objekte("config", `${this.namespace}.etagen.`)
       ]);
       for (const objekt of listen.flat()) {
         this.uebernimmSicher(objekt._id, objekt);
@@ -106,9 +116,36 @@ class Katalog {
   karte(kartenId) {
     return this.eintraege.karten.get(kartenId);
   }
-  raeume() {
+  // Von oben nach unten; bei gleicher Position nach Namen, damit die Folge nie vom Zufall des Ladens abhängt
+  alleEtagen() {
     var _a;
-    (_a = this.raeumeSortiert) != null ? _a : this.raeumeSortiert = [...this.raeumeNachId.values()].sort((a, b) => a.id.localeCompare(b.id));
+    (_a = this.etagenSortiert) != null ? _a : this.etagenSortiert = [...this.eintraege.etagen].sort(
+      ([a, x], [b, y]) => x.position - y.position || x.name.localeCompare(y.name) || a.localeCompare(b)
+    );
+    return this.etagenSortiert;
+  }
+  etagen() {
+    return this.alleEtagen().map(([id, e]) => ({ id, name: e.name, kurz: e.kurz }));
+  }
+  // Nach Etagen, darin wie im Admin geordnet; ein Raum in zwei Etagen zählt bei der oberen. Räume ohne Etage zuletzt
+  // nach Namen in der Systemsprache, wie die App sie vor Protokoll 5 selbst ordnete.
+  raeume() {
+    if (!this.raeumeSortiert) {
+      const folge = [];
+      const vergeben = /* @__PURE__ */ new Set();
+      for (const [etage, e] of this.alleEtagen()) {
+        for (const id of e.raeume) {
+          const raum = this.raeumeNachId.get(id);
+          if (raum && !vergeben.has(id)) {
+            vergeben.add(id);
+            folge.push({ ...raum, etage });
+          }
+        }
+      }
+      const name = (r) => (0, import_rechte.text)(r.name, this.sprache, r.id);
+      const rest = [...this.raeumeNachId.values()].filter((r) => !vergeben.has(r.id)).sort((a, b) => name(a).localeCompare(name(b), this.sprache) || a.id.localeCompare(b.id));
+      this.raeumeSortiert = [...folge, ...rest];
+    }
     return this.raeumeSortiert;
   }
   datenpunkt(id) {
@@ -136,6 +173,7 @@ class Katalog {
         return false;
       }
       this.sprache = neu;
+      this.raeumeSortiert = void 0;
       if (this.datenpunkte.size === 0) {
         return true;
       }
@@ -148,7 +186,7 @@ class Katalog {
     if ((0, import_objekte.appIdAus)(this.namespace, id)) {
       return true;
     }
-    for (const ordner of ["karten", "profile"]) {
+    for (const ordner of ["karten", "profile", "etagen"]) {
       const praefix = `${this.namespace}.${ordner}.`;
       if (id.startsWith(praefix)) {
         return this.uebernimmEintrag(ordner, id.slice(praefix.length), objekt);
@@ -177,6 +215,8 @@ class Katalog {
     }
     this.kartenSortiert = void 0;
     this.profileSortiert = void 0;
+    this.etagenSortiert = void 0;
+    this.raeumeSortiert = void 0;
     const eintraege = this.eintraege[ordner];
     if ((objekt == null ? void 0 : objekt.type) !== "config") {
       return eintraege.delete(id);

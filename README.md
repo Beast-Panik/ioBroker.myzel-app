@@ -31,6 +31,8 @@ K3: Karten und Profile haben je einen eigenen Reiter in den Instanzeinstellungen
 
 Karten- und Profilseite (0.4.0): Die Reiter Karten und Profile sind je eine eigene Seite. Karten stehen je Raum als Kacheln, ohne Raum zuletzt; das Zahnrad öffnet sie zum Bearbeiten, „Neue Karte“ legt eine an. Je Teil sucht ein Feld nur Datenpunkte des passenden Typs, nach ID und Name. Der Adapter prüft jede Karte beim Speichern und zeigt Mängel je Teil an der Kachel und im Dialog. Profile stehen als Kacheln mit dem, was eine App damit sieht, und den Apps, die sie haben; im Dialog je Raum Nein, Ansehen oder Bedienen, je Karte Wie Raum, Ansehen, Bedienen oder Gesperrt, mit einer Vorschau, die der Adapter bei jeder Wahl rechnet. Karten und Profile sind Objekte `karten.<id>` und `profile.<id>` und wirken sofort, ohne Neustart der Instanz: Verbundene Apps bekommen nach rund 2 s neue Rechte und bleiben verbunden. Die Seiten verbinden sich über die Bibliothek, die der Admin selbst ausliefert, und gehen nur bei laufender Instanz. Karten und Profile aus den Instanzeinstellungen zieht der Start in Objekte um und leert die Listen; ein brauchbares Objekt mit derselben ID gewinnt.
 
+Etagen (0.5.0): Der Reiter Räume legt Etagen mit Name und Kurzname an, als Objekte `etagen.<id>`. Räume zieht man in eine Etage und ordnet sie dort, auch mit Alt und Pfeiltasten; das Zahnrad ändert Name, Kurzname und Position oder löscht die Etage. Apps ab Protokoll 5 bekommen die Etagen mit den sichtbaren Räumen und die Räume in dieser Folge, Räume ohne Etage danach nach Namen. Die App zeigt Überschriften nur, wenn die sichtbaren Räume auf mehr als einer Etage liegen. Apps mit Protokoll 3 oder 4 sehen keinen Unterschied. Die Reiter Karten und Profile nennen die Räume in derselben Folge. Etagen wirken sofort, ohne Neustart der Instanz.
+
 ## Entwickeln
 
 ```
@@ -95,6 +97,10 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.5.0
+
+Etagen: Ein neuer Reiter Räume legt Etagen mit Name und Kurzname an und ordnet die Räume durch Ziehen oder mit der Tastatur. Protokoll 5 bringt `etagen` im Rechteinhalt und `etage` am Raum; die Räume kommen in der Folge der Etagen. Apps mit Protokoll 3 oder 4 bekommen beides nicht. Die Reiter Karten und Profile nennen die Räume in derselben Folge
 
 ### 0.4.0
 
