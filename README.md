@@ -94,6 +94,10 @@ Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
 
+### 0.3.0
+
+Benachrichtigungen im eigenen Ordner `apps.<id>.benachrichtigungen`: je App ein Unterordner, benannt nach dem Paketnamen mit `-` statt Punkt (`org-signal`), mit `app`, `paket`, `titel`, `text`, `zeit` und `json`; dazu `letzte` mit der neuesten Benachrichtigung aller Apps. Geschrieben wird erst der Ordner der App, dann `letzte`, je mit `json` zuletzt. Protokoll 4 bringt die Nachricht `auswahl`: Die App meldet, welche Apps sie weitergibt, der Adapter legt deren Ordner sofort an und entfernt die Ordner abgewählter Apps. Apps mit Protokoll 3 laufen weiter, ihre Ordner entstehen mit der ersten Benachrichtigung. Der Kanal `benachrichtigung` von 0.2.x wird beim Start entfernt
+
 ### 0.2.2
 
 Fehler behoben: Nach schnellem Schalten blieb in der App der falsche Stand stehen, wenn der Geräteadapter mit einem älteren Zeitstempel bestätigte, etwa der Zeit seines Gateways. Der Adapter verwarf solche Änderungen. Jetzt gilt immer die zuletzt gemeldete Änderung; ioBroker meldet in Reihenfolge

@@ -53,6 +53,19 @@ export interface Appablage {
     zustand(appId: string, name: Datenpunktname): Promise<ioBroker.State | null | undefined>;
     // Was es von Anfang an geben muss: hinweis.senden, damit Skripte schreiben können
     richteEin(appId: string): Promise<void>;
+    // Die Ordner der Apps unter benachrichtigungen, ohne letzte
+    benachrichtigungsordner(appId: string): Promise<string[]>;
+    // Legt den Ordner samt Datenpunkten an oder benennt ihn um
+    legeBenachrichtigungsordner(appId: string, ordner: string, name: string): Promise<void>;
+    entferneBenachrichtigungsordner(appId: string, ordner: string): Promise<void>;
+    // In der Reihenfolge der Schlüssel, mit ack=true und ts; fehlt der Ordner, entsteht er mit name
+    schreibeBenachrichtigung(
+        appId: string,
+        ordner: string,
+        name: string,
+        werte: Benachrichtigungswerte,
+        ts: number,
+    ): Promise<void>;
     hinweise(appId: string): Promise<Hinweisstand>;
     legeHinweise(appId: string, stand: Hinweisstand): Promise<void>;
 }
@@ -68,7 +81,6 @@ const text = (de: string, en: string): ioBroker.StateCommon => ({
 const KANAELE: Record<string, ioBroker.StringOrTranslated> = {
     akku: { de: 'Akku', en: 'Battery' },
     anruf: { de: 'Anruf', en: 'Call' },
-    benachrichtigung: { de: 'Benachrichtigung', en: 'Notification' },
     hinweis: { de: 'Hinweis', en: 'Notice' },
 };
 
@@ -98,18 +110,38 @@ const DATENPUNKTE = {
     'anruf.richtung': text('Richtung', 'Direction'),
     'anruf.nummer': { ...text('Rufnummer', 'Phone number'), role: 'text.phone' },
     'anruf.name': text('Name', 'Name'),
-    'benachrichtigung.app': text('App', 'App'),
-    'benachrichtigung.paket': text('Paketname', 'Package name'),
-    'benachrichtigung.titel': text('Titel', 'Title'),
-    'benachrichtigung.text': text('Text', 'Text'),
-    'benachrichtigung.zeit': { name: { de: 'Zeit', en: 'Time' }, type: 'number', role: 'date', ...nurLesen },
-    'benachrichtigung.json': { ...text('Alles als JSON', 'All as JSON'), role: 'json' },
     'hinweis.senden': { ...text('Hinweis senden', 'Send notice'), write: true },
     'hinweis.status': text('Hinweisstatus', 'Notice state'),
 } satisfies Record<string, ioBroker.StateCommon>;
 
 export type Datenpunktname = keyof typeof DATENPUNKTE;
 export type Appwerte = Partial<Record<Datenpunktname, ioBroker.StateValue>>;
+
+// Je Ordner unter benachrichtigungen, json zuletzt
+const BENACHRICHTIGUNG = {
+    app: text('App', 'App'),
+    paket: text('Paketname', 'Package name'),
+    titel: text('Titel', 'Title'),
+    text: text('Text', 'Text'),
+    zeit: { name: { de: 'Zeit', en: 'Time' }, type: 'number', role: 'date', ...nurLesen },
+    json: { ...text('Alles als JSON', 'All as JSON'), role: 'json' },
+} satisfies Record<string, ioBroker.StateCommon>;
+
+export type Benachrichtigungswerte = Record<keyof typeof BENACHRICHTIGUNG, ioBroker.StateValue>;
+
+// Die letzte Benachrichtigung aller Apps, neben den Ordnern je App
+export const LETZTE = 'letzte';
+const LETZTE_NAME: ioBroker.StringOrTranslated = { de: 'Letzte Benachrichtigung', en: 'Latest notification' };
+const BENACHRICHTIGUNGEN_NAME: ioBroker.StringOrTranslated = { de: 'Benachrichtigungen', en: 'Notifications' };
+
+/**
+ * Ordner einer App unter benachrichtigungen: der Paketname mit - statt Punkt. Ein - kommt in Paketnamen nicht vor, die
+ * Zuordnung ist also eindeutig und umkehrbar. undefined für einen Paketnamen, der letzte ergäbe.
+ */
+export function ordnerFuer(paket: string): string | undefined {
+    const ordner = paket.replaceAll('.', '-');
+    return ordner === LETZTE ? undefined : ordner;
+}
 
 const pruefeAppId = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/appId` }, [gemeinsam]);
 
@@ -199,6 +231,61 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
 
     public async richteEin(appId: string): Promise<void> {
         await this.sichere(appId, 'hinweis.senden');
+        // Bis 0.2.x stand die letzte Benachrichtigung im Kanal benachrichtigung, jetzt unter benachrichtigungen.letzte.
+        const alt = `apps.${appId}.benachrichtigung`;
+        if (await this.adapter.getObjectAsync(alt)) {
+            await this.adapter.delObjectAsync(alt, { recursive: true });
+            this.adapter.log.info(`App ${appId}: Kanal benachrichtigung entfernt, jetzt unter benachrichtigungen`);
+        }
+    }
+
+    public async benachrichtigungsordner(appId: string): Promise<string[]> {
+        const praefix = `${this.adapter.namespace}.apps.${appId}.benachrichtigungen.`;
+        const ansicht = await this.adapter.getObjectViewAsync('system', 'channel', {
+            startkey: praefix,
+            endkey: `${praefix}香`,
+        });
+        return ansicht.rows
+            .map(r => r.id.slice(praefix.length))
+            .filter(ordner => ordner !== LETZTE && ordner.length > 0 && !ordner.includes('.'));
+    }
+
+    // Nur bei neuem Namen geschrieben: Jede Auswahl nennt alle Apps, ihre Ordner bleiben meist, wie sie sind.
+    public async legeBenachrichtigungsordner(appId: string, ordner: string, name: string): Promise<void> {
+        const kanal = `apps.${appId}.benachrichtigungen.${ordner}`;
+        await this.sichereBenachrichtigungen(appId);
+        if ((await this.adapter.getObjectAsync(kanal))?.common?.name !== name) {
+            await this.adapter.extendObjectAsync(kanal, { type: 'channel', common: { name }, native: {} });
+        }
+        await this.sichereZustaende(kanal);
+    }
+
+    public async entferneBenachrichtigungsordner(appId: string, ordner: string): Promise<void> {
+        const kanal = `apps.${appId}.benachrichtigungen.${ordner}`;
+        await this.adapter.delObjectAsync(kanal, { recursive: true });
+        this.angelegt.delete(kanal);
+    }
+
+    public async schreibeBenachrichtigung(
+        appId: string,
+        ordner: string,
+        name: string,
+        werte: Benachrichtigungswerte,
+        ts: number,
+    ): Promise<void> {
+        const kanal = `apps.${appId}.benachrichtigungen.${ordner}`;
+        if (!this.angelegt.has(kanal)) {
+            await this.sichereBenachrichtigungen(appId);
+            await this.adapter.setObjectNotExistsAsync(kanal, {
+                type: 'channel',
+                common: { name: ordner === LETZTE ? LETZTE_NAME : name },
+                native: {},
+            });
+            await this.sichereZustaende(kanal);
+        }
+        for (const [n, val] of Object.entries(werte)) {
+            await this.adapter.setStateAsync(`${kanal}.${n}`, { val, ack: true, ts });
+        }
     }
 
     public async hinweise(appId: string): Promise<Hinweisstand> {
@@ -266,6 +353,25 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
 
     public zustand(appId: string, name: Datenpunktname): Promise<ioBroker.State | null | undefined> {
         return this.adapter.getStateAsync(`apps.${appId}.${name}`);
+    }
+
+    private async sichereBenachrichtigungen(appId: string): Promise<void> {
+        const ordner = `apps.${appId}.benachrichtigungen`;
+        if (!this.angelegt.has(ordner)) {
+            await this.adapter.setObjectNotExistsAsync(ordner, {
+                type: 'folder',
+                common: { name: BENACHRICHTIGUNGEN_NAME },
+                native: {},
+            });
+            this.angelegt.add(ordner);
+        }
+    }
+
+    private async sichereZustaende(kanal: string): Promise<void> {
+        for (const [n, common] of Object.entries(BENACHRICHTIGUNG)) {
+            await this.adapter.setObjectNotExistsAsync(`${kanal}.${n}`, { type: 'state', common, native: {} });
+        }
+        this.angelegt.add(kanal);
     }
 
     // Erst beim ersten Wert: So entstehen keine Datenpunkte für ausgeschaltete Handydaten.

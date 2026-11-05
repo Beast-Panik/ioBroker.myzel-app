@@ -145,6 +145,22 @@ tests.integration(path.join(__dirname, '..'), {
                 ]) {
                     await harness.objects.setObjectAsync(`myzel-app.0.${id}`, { type: 'config', common: {}, native });
                 }
+                // Eine App aus 0.2.x mit dem alten Kanal benachrichtigung
+                for (const [id, type] of [
+                    ['', 'device'],
+                    ['.benachrichtigung', 'channel'],
+                ]) {
+                    await harness.objects.setObjectAsync(`myzel-app.0.apps.altappab${id}`, {
+                        type,
+                        common: { name: 'alt' },
+                        native: {},
+                    });
+                }
+                await harness.objects.setObjectAsync('myzel-app.0.apps.altappab.benachrichtigung.json', {
+                    type: 'state',
+                    common: { name: 'json', type: 'string', role: 'json', read: true, write: false },
+                    native: {},
+                });
                 await harness.startAdapterAndWait(true);
                 identitaet = (await harness.objects.getObjectAsync('myzel-app.0.identitaet')).native;
             });
@@ -173,6 +189,18 @@ tests.integration(path.join(__dirname, '..'), {
                     kartenLesen: [],
                     gesperrt: [],
                 });
+            });
+
+            it('entfernt beim Start den Kanal benachrichtigung von 0.2.x', async () => {
+                expect(await harness.objects.getObjectAsync('myzel-app.0.apps.altappab.benachrichtigung')).to.equal(
+                    null,
+                );
+                expect(
+                    await harness.objects.getObjectAsync('myzel-app.0.apps.altappab.benachrichtigung.json'),
+                ).to.equal(null);
+                expect(await harness.objects.getObjectAsync('myzel-app.0.apps.altappab.hinweis.senden')).to.not.equal(
+                    null,
+                );
             });
 
             it('erzeugt beim ersten Start Adapter-ID und Zertifikat, den Schlüssel verschlüsselt', async () => {
@@ -321,11 +349,12 @@ tests.integration(path.join(__dirname, '..'), {
                 const zugang = await legeApp('defghijk', '', { akku: true, anruf: false, benachrichtigung: true });
                 const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
                     t: 'hallo',
-                    v: 3,
+                    v: 4,
                     app: 'defghijk',
                     zugang,
                     geraet,
                 });
+                expect(app.erste).to.include({ t: 'willkommen', v: 4 });
                 expect(app.erste.handydaten).to.deep.equal({ akku: true, anruf: false, benachrichtigung: true });
                 const zustand = name => harness.states.getStateAsync(`myzel-app.0.apps.defghijk.${name}`);
                 await bis(async () => (await zustand('anwesend'))?.val === true);
@@ -344,13 +373,42 @@ tests.integration(path.join(__dirname, '..'), {
                         zeit,
                     }),
                 );
-                await bis(async () => (await zustand('benachrichtigung.json')) !== null);
+                await bis(async () => (await zustand('benachrichtigungen.letzte.json')) !== null);
                 expect(await zustand('akku.stand')).to.include({ val: 42, ack: true, ts: zeit });
                 expect(await zustand('akku.laedt')).to.include({ val: true, ack: true });
-                expect(JSON.parse((await zustand('benachrichtigung.json')).val)).to.include({
-                    titel: 'Anna',
-                    text: 'Hallo',
-                });
+                for (const ordner of ['org-signal', 'letzte']) {
+                    expect(JSON.parse((await zustand(`benachrichtigungen.${ordner}.json`)).val)).to.include({
+                        titel: 'Anna',
+                        text: 'Hallo',
+                    });
+                    expect(await zustand(`benachrichtigungen.${ordner}.titel`)).to.include({
+                        val: 'Anna',
+                        ack: true,
+                        ts: zeit,
+                    });
+                }
+                const objekt = id => harness.objects.getObjectAsync(`myzel-app.0.apps.defghijk.${id}`);
+                expect((await objekt('benachrichtigungen')).type).to.equal('folder');
+                expect((await objekt('benachrichtigungen.org-signal')).common.name).to.equal('Signal');
+                expect((await objekt('benachrichtigungen.letzte')).type).to.equal('channel');
+
+                // Auswahl: neuer Ordner sofort, mit Datenpunkten, abgewählte weg, letzte bleibt
+                app.ws.send(
+                    JSON.stringify({
+                        t: 'auswahl',
+                        apps: [
+                            { paket: 'org.signal', app: 'Signal Messenger' },
+                            { paket: 'com.whatsapp', app: 'WhatsApp' },
+                        ],
+                    }),
+                );
+                await bis(async () => (await objekt('benachrichtigungen.com-whatsapp.json')) !== null);
+                expect((await objekt('benachrichtigungen.com-whatsapp')).common.name).to.equal('WhatsApp');
+                expect((await objekt('benachrichtigungen.org-signal')).common.name).to.equal('Signal Messenger');
+                app.ws.send(JSON.stringify({ t: 'auswahl', apps: [{ paket: 'com.whatsapp', app: 'WhatsApp' }] }));
+                await bis(async () => (await objekt('benachrichtigungen.org-signal')) === null);
+                expect(await objekt('benachrichtigungen.org-signal.json')).to.equal(null);
+                expect(await objekt('benachrichtigungen.letzte.json')).to.not.equal(null);
                 expect((await harness.objects.getObjectAsync('myzel-app.0.apps.defghijk.akku')).type).to.equal(
                     'channel',
                 );

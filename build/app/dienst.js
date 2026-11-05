@@ -52,7 +52,7 @@ var import_werte = require("./werte");
 const NEUBERECHNUNG_MS = 2e3;
 const PROTOKOLLVERSIONEN = import_gemeinsam_schema.default.$defs.version.enum;
 const NEUESTE_VERSION = Math.max(...PROTOKOLLVERSIONEN);
-const appPruefer = () => new import_schema.Nachrichtenpruefer(import_app_an_adapter_schema.default, [import_gemeinsam_schema.default], PROTOKOLLVERSIONEN);
+const appPruefer = (versionen = PROTOKOLLVERSIONEN) => new import_schema.Nachrichtenpruefer(import_app_an_adapter_schema.default, [import_gemeinsam_schema.default], versionen);
 const adapterPruefer = () => new import_schema.Nachrichtenpruefer(import_adapter_an_app_schema.default, [import_gemeinsam_schema.default], PROTOKOLLVERSIONEN);
 class Dienst {
   constructor(o) {
@@ -208,6 +208,7 @@ class Dienst {
         akku: (m) => handy.akku(m),
         anruf: (m) => handy.anruf(m),
         benachrichtigung: (m) => handy.benachrichtigung(m),
+        auswahl: (m) => handy.auswahl(m),
         angezeigt: (m) => this.hinweise.angezeigt(appId, m.id)
       },
       grenzen: this.o.grenzen

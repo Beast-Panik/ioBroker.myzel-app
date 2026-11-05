@@ -23,6 +23,7 @@ __export(handydaten_exports, {
   kuerze: () => kuerze
 });
 module.exports = __toCommonJS(handydaten_exports);
+var import_objekte = require("./objekte");
 function kuerze(text, laenge) {
   return text.length <= laenge ? text : [...text].slice(0, laenge).join("");
 }
@@ -54,7 +55,8 @@ class Handyeingang {
       a.zeit
     );
   }
-  // json zuletzt: Ein Skript, das darauf reagiert, sieht immer eine vollständige Benachrichtigung.
+  // Erst der Ordner der App, dann letzte, je mit json zuletzt: Ein Skript, das darauf reagiert, sieht immer eine
+  // vollständige Benachrichtigung, und mit letzte.json ist alles geschrieben.
   benachrichtigung(m) {
     var _a, _b;
     const b = m;
@@ -66,20 +68,47 @@ class Handyeingang {
       zeit: b.zeit,
       nachgeliefert: b.nachgeliefert === true
     };
-    return this.schreibe(
-      "benachrichtigung",
-      {
-        "benachrichtigung.app": inhalt.app,
-        "benachrichtigung.paket": inhalt.paket,
-        "benachrichtigung.titel": inhalt.titel,
-        "benachrichtigung.text": inhalt.text,
-        "benachrichtigung.zeit": inhalt.zeit,
-        "benachrichtigung.json": JSON.stringify(inhalt)
-      },
-      b.zeit
-    );
+    const werte = {
+      app: inhalt.app,
+      paket: inhalt.paket,
+      titel: inhalt.titel,
+      text: inhalt.text,
+      zeit: inhalt.zeit,
+      json: JSON.stringify(inhalt)
+    };
+    const ordner = (0, import_objekte.ordnerFuer)(b.paket);
+    return this.erledige("benachrichtigung", "benachrichtigung", async () => {
+      if (ordner) {
+        await this.o.ablage.schreibeBenachrichtigung(this.o.appId, ordner, b.app, werte, b.zeit);
+      }
+      await this.o.ablage.schreibeBenachrichtigung(this.o.appId, import_objekte.LETZTE, b.app, werte, b.zeit);
+    });
+  }
+  // Ab Protokoll 4. Bei doppeltem Paketnamen gilt der letzte Eintrag.
+  auswahl(m) {
+    const namen = /* @__PURE__ */ new Map();
+    for (const a of m.apps) {
+      const ordner = (0, import_objekte.ordnerFuer)(a.paket);
+      if (ordner) {
+        namen.set(ordner, a.app);
+      }
+    }
+    return this.erledige("benachrichtigung", "Auswahl", async () => {
+      for (const ordner of await this.o.ablage.benachrichtigungsordner(this.o.appId)) {
+        if (!namen.has(ordner)) {
+          await this.o.ablage.entferneBenachrichtigungsordner(this.o.appId, ordner);
+        }
+      }
+      for (const [ordner, name] of namen) {
+        await this.o.ablage.legeBenachrichtigungsordner(this.o.appId, ordner, name);
+      }
+      this.o.log.debug(`App ${this.o.appId}: Auswahl mit ${namen.size} Apps \xFCbernommen`);
+    });
   }
   schreibe(art, werte, zeit) {
+    return this.erledige(art, art, () => this.o.ablage.schreibe(this.o.appId, werte, zeit));
+  }
+  erledige(art, was, aufgabe) {
     if (!this.handydaten[art]) {
       this.o.log.debug(`App ${this.o.appId}: ${art} abgelehnt, nicht eingeschaltet`);
       this.o.verbindung.sendeFehler("aus", { text: `${art} ist f\xFCr diese App nicht eingeschaltet` });
@@ -87,9 +116,9 @@ class Handyeingang {
     }
     this.reihe = this.reihe.then(async () => {
       try {
-        await this.o.ablage.schreibe(this.o.appId, werte, zeit);
+        await aufgabe();
       } catch {
-        this.o.log.warn(`App ${this.o.appId}: ${art} nicht geschrieben`);
+        this.o.log.warn(`App ${this.o.appId}: ${was} nicht geschrieben`);
         this.o.verbindung.sendeFehler("intern");
       }
     });

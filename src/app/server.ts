@@ -27,6 +27,8 @@ export interface ServerOptionen {
     hinweisFristMs: number;
     grenzen?: Grenzen;
     neuberechnungMs?: number;
+    // Nur für Tests: ein Adapter, der weniger Protokollversionen spricht
+    versionen?: number[];
 }
 
 export interface Server {
@@ -41,7 +43,7 @@ export interface Server {
 }
 
 export async function starteServer(o: ServerOptionen): Promise<Server> {
-    const pruefer = appPruefer();
+    const pruefer = appPruefer(o.versionen);
     const sperrliste = new Sperrliste(o.grenzen);
     const kopplung = new Kopplung(o.grenzen);
     const fehlversuch = (adresse: string): void => {

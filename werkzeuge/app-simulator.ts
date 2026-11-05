@@ -25,6 +25,7 @@ Befehle, je Zeile (Text mit Leerzeichen in "..."):
   abo <id> ...                  setze <id> <wert als JSON oder Text>
   akku <0-100> [laedt]          anruf <frei|klingelt|gespraech> [eingehend|ausgehend] [nummer] [name]
   benachrichtigung <app> <paket> [titel] [text]
+  auswahl [<paket>=<app> ...]   ab Version 4: Apps, deren Benachrichtigungen hinausgehen
   angezeigt <hinweis-id>        roh <JSON, ungeprüft>          ende`;
 
 const QR_SCHEMA = 'myzelapp:';
@@ -202,6 +203,16 @@ function nachricht(teile: string[], n: () => number): object | string {
             const [app, paket, titel, text] = a;
             return { t: 'benachrichtigung', app, paket, ...(titel && { titel }), ...(text && { text }), zeit };
         }
+        case 'auswahl':
+            return {
+                t: 'auswahl',
+                apps: a.map(eintrag => {
+                    const gleich = eintrag.indexOf('=');
+                    return gleich < 0
+                        ? { paket: eintrag, app: eintrag }
+                        : { paket: eintrag.slice(0, gleich), app: eintrag.slice(gleich + 1) };
+                }),
+            };
         case 'angezeigt':
             return { t: 'angezeigt', id: a[0] };
         default:

@@ -79,6 +79,8 @@ async function main(): Promise<void> {
         textLaenge: 1000,
         hinweisFristMs: 60_000,
         namespace: NAMESPACE,
+        // Etwa GEGENPROBE_VERSIONEN=3 für einen Adapter vor Protokoll 4
+        versionen: process.env.GEGENPROBE_VERSIONEN?.split(',').map(Number),
     });
     await laeuft;
     quelle.beiAenderung = (id, state) => server.geaendert(id, state);
@@ -140,6 +142,7 @@ async function main(): Promise<void> {
             return {};
         },
         appwerte: b => ({ werte: ablage.werte_.get(b.app) ?? null, geschrieben: ablage.geschrieben }),
+        ordner: b => ({ ordner: Object.fromEntries(ablage.ordner_.get(b.app) ?? []) }),
         pruefe: b => {
             let daten: unknown;
             try {

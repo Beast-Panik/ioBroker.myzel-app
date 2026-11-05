@@ -1,7 +1,14 @@
 import type { Protokoll } from '../basis/grenzen';
 import type { Verbindung, Weg } from '../basis/kern';
 import type { Nachricht } from '../basis/schema';
-import type { Appablage, Appwerte, Handydaten } from './objekte';
+import {
+    type Appablage,
+    type Appwerte,
+    type Benachrichtigungswerte,
+    type Handydaten,
+    LETZTE,
+    ordnerFuer,
+} from './objekte';
 
 interface Akku {
     stand: number;
@@ -17,9 +24,12 @@ interface Anruf {
     zeit: number;
 }
 
-interface Benachrichtigung {
+interface Benachrichtigungsapp {
     app: string;
     paket: string;
+}
+
+interface Benachrichtigung extends Benachrichtigungsapp {
     titel?: string;
     text?: string;
     zeit: number;
@@ -71,7 +81,8 @@ export class Handyeingang {
         );
     }
 
-    // json zuletzt: Ein Skript, das darauf reagiert, sieht immer eine vollständige Benachrichtigung.
+    // Erst der Ordner der App, dann letzte, je mit json zuletzt: Ein Skript, das darauf reagiert, sieht immer eine
+    // vollständige Benachrichtigung, und mit letzte.json ist alles geschrieben.
     public benachrichtigung(m: Nachricht): Promise<void> {
         const b = m as unknown as Benachrichtigung;
         const inhalt = {
@@ -82,21 +93,50 @@ export class Handyeingang {
             zeit: b.zeit,
             nachgeliefert: b.nachgeliefert === true,
         };
-        return this.schreibe(
-            'benachrichtigung',
-            {
-                'benachrichtigung.app': inhalt.app,
-                'benachrichtigung.paket': inhalt.paket,
-                'benachrichtigung.titel': inhalt.titel,
-                'benachrichtigung.text': inhalt.text,
-                'benachrichtigung.zeit': inhalt.zeit,
-                'benachrichtigung.json': JSON.stringify(inhalt),
-            },
-            b.zeit,
-        );
+        const werte: Benachrichtigungswerte = {
+            app: inhalt.app,
+            paket: inhalt.paket,
+            titel: inhalt.titel,
+            text: inhalt.text,
+            zeit: inhalt.zeit,
+            json: JSON.stringify(inhalt),
+        };
+        const ordner = ordnerFuer(b.paket);
+        return this.erledige('benachrichtigung', 'benachrichtigung', async () => {
+            if (ordner) {
+                await this.o.ablage.schreibeBenachrichtigung(this.o.appId, ordner, b.app, werte, b.zeit);
+            }
+            await this.o.ablage.schreibeBenachrichtigung(this.o.appId, LETZTE, b.app, werte, b.zeit);
+        });
+    }
+
+    // Ab Protokoll 4. Bei doppeltem Paketnamen gilt der letzte Eintrag.
+    public auswahl(m: Nachricht): Promise<void> {
+        const namen = new Map<string, string>();
+        for (const a of m.apps as Benachrichtigungsapp[]) {
+            const ordner = ordnerFuer(a.paket);
+            if (ordner) {
+                namen.set(ordner, a.app);
+            }
+        }
+        return this.erledige('benachrichtigung', 'Auswahl', async () => {
+            for (const ordner of await this.o.ablage.benachrichtigungsordner(this.o.appId)) {
+                if (!namen.has(ordner)) {
+                    await this.o.ablage.entferneBenachrichtigungsordner(this.o.appId, ordner);
+                }
+            }
+            for (const [ordner, name] of namen) {
+                await this.o.ablage.legeBenachrichtigungsordner(this.o.appId, ordner, name);
+            }
+            this.o.log.debug(`App ${this.o.appId}: Auswahl mit ${namen.size} Apps übernommen`);
+        });
     }
 
     private schreibe(art: keyof Handydaten, werte: Appwerte, zeit: number): Promise<void> {
+        return this.erledige(art, art, () => this.o.ablage.schreibe(this.o.appId, werte, zeit));
+    }
+
+    private erledige(art: keyof Handydaten, was: string, aufgabe: () => Promise<void>): Promise<void> {
         if (!this.handydaten[art]) {
             this.o.log.debug(`App ${this.o.appId}: ${art} abgelehnt, nicht eingeschaltet`);
             this.o.verbindung.sendeFehler('aus', { text: `${art} ist für diese App nicht eingeschaltet` });
@@ -104,10 +144,10 @@ export class Handyeingang {
         }
         this.reihe = this.reihe.then(async () => {
             try {
-                await this.o.ablage.schreibe(this.o.appId, werte, zeit);
+                await aufgabe();
             } catch {
                 // Ohne Fehlertext: Er könnte Rufnummer oder Nachrichteninhalt enthalten.
-                this.o.log.warn(`App ${this.o.appId}: ${art} nicht geschrieben`);
+                this.o.log.warn(`App ${this.o.appId}: ${was} nicht geschrieben`);
                 this.o.verbindung.sendeFehler('intern');
             }
         });

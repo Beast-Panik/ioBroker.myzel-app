@@ -28,7 +28,7 @@ var import_schutz = require("../basis/schutz");
 var import_heimnetz = require("../zugang/heimnetz");
 var import_dienst = require("./dienst");
 async function starteServer(o) {
-  const pruefer = (0, import_dienst.appPruefer)();
+  const pruefer = (0, import_dienst.appPruefer)(o.versionen);
   const sperrliste = new import_schutz.Sperrliste(o.grenzen);
   const kopplung = new import_kopplung.Kopplung(o.grenzen);
   const fehlversuch = (adresse) => {

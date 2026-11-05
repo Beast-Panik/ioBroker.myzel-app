@@ -17,7 +17,7 @@ describe('Nachrichtenpruefer', () => {
     });
 
     it('prüft die Version bei hallo und koppeln vor dem Schema', () => {
-        expect(lies({ t: 'hallo', v: 4 })).to.deep.equal({ art: 'version', v: 4 });
+        expect(lies({ t: 'hallo', v: 5 })).to.deep.equal({ art: 'version', v: 5 });
         expect(lies({ t: 'koppeln', v: 2, geheimnis: 'x' })).to.deep.equal({ art: 'version', v: 2 });
         expect(lies({ t: 'hallo', v: '2' }).art).to.equal('ungueltig');
         expect(lies({ t: 'abo', ids: [], v: 2 }).art).to.equal('ungueltig');

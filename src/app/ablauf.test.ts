@@ -371,12 +371,22 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
 
     it('andere Protokollversion: fehler version mit den unterstützten Versionen und 4002', async () => {
         const g = await verbinde();
-        g.sende({ t: 'hallo', v: 4, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
+        g.sende({ t: 'hallo', v: 5, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
         const fehler = await erwarteFehler(g, 'version', SCHLIESSCODE.version);
-        expect(fehler.unterstuetzt).to.deep.equal([3]);
+        expect(fehler.unterstuetzt).to.deep.equal([3, 4]);
         const alt = await verbinde();
         alt.sende({ t: 'koppeln', v: 2, geheimnis: 'A'.repeat(22), name: 'X', geraet });
-        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3]);
+        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4]);
+    });
+
+    it('spricht Version 3 und 4 und antwortet in der Version der App', async () => {
+        const { g, appId, zugang, willkommen } = await kopple('familie', 4);
+        expect(willkommen).to.include({ t: 'willkommen', v: 4 });
+        g.schliesse();
+        await bis(() => u.ablage.werte_.get(appId)?.online === false);
+        const alt = await melde(appId, zugang);
+        expect(await alt.naechste()).to.include({ t: 'willkommen', v: 3 });
+        alt.schliesse();
     });
 
     const vorher: [string, string | Buffer][] = [
@@ -761,8 +771,8 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         expect(u.log.join('\n')).to.contain(`App ${zweite.appId} entfernt oder Zugang geändert`);
     });
 
-    async function mitHandydaten(): Promise<{ g: Gegenstelle; appId: string }> {
-        const { g, appId } = await kopple();
+    async function mitHandydaten(version = 3): Promise<{ g: Gegenstelle; appId: string }> {
+        const { g, appId } = await kopple('familie', version);
         await u.ablage.aendere(appId, { handydaten: { akku: true, anruf: true, benachrichtigung: true } });
         u.quelle.app(appId, u.ablage.apps.get(appId));
         const rechte = await g.naechste();
@@ -830,35 +840,77 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         g.schliesse();
     });
 
-    it('Benachrichtigung: Titel und Text gekürzt nach Zeichen, json zuletzt und vollständig', async () => {
+    it('Benachrichtigung: erst in den Ordner der App, dann in letzte, gekürzt nach Zeichen, json je zuletzt', async () => {
         const { g, appId } = await mitHandydaten();
         const zeit = vorhin();
         const titel = '😀'.repeat(30);
         const text = `${'x'.repeat(19)}😀😀`;
         geheimnisse.push(titel.slice(0, 10), text);
         g.sende({ t: 'benachrichtigung', app: 'Signal', paket: 'org.thoughtcrime.securesms', titel, text, zeit });
-        await bis(() => u.ablage.geschrieben.some(e => e.includes('.benachrichtigung.json=')));
-        const eintraege = u.ablage.geschrieben.filter(e => e.includes('.benachrichtigung.'));
-        expect(eintraege.map(e => /\.benachrichtigung\.(\w+)=/.exec(e)?.[1])).to.deep.equal([
-            'app',
-            'paket',
-            'titel',
-            'text',
-            'zeit',
-            'json',
+        await bis(() => u.ablage.geschrieben.some(e => e.includes('.letzte.json=')));
+        const eintraege = u.ablage.geschrieben.filter(e => e.includes('.benachrichtigungen.'));
+        const namen = ['app', 'paket', 'titel', 'text', 'zeit', 'json'];
+        expect(eintraege.map(e => /\.benachrichtigungen\.([\w-]+\.\w+)=/.exec(e)?.[1])).to.deep.equal([
+            ...namen.map(n => `org-thoughtcrime-securesms.${n}`),
+            ...namen.map(n => `letzte.${n}`),
         ]);
         expect(eintraege.every(e => e.endsWith(`@${zeit}`))).to.equal(true);
-        const werte = u.ablage.werte_.get(appId)!;
-        expect(werte['benachrichtigung.titel']).to.equal('😀'.repeat(20));
-        expect(werte['benachrichtigung.text']).to.equal(`${'x'.repeat(19)}😀`);
-        expect(JSON.parse(werte['benachrichtigung.json'] as string)).to.deep.equal({
-            app: 'Signal',
-            paket: 'org.thoughtcrime.securesms',
-            titel: '😀'.repeat(20),
-            text: `${'x'.repeat(19)}😀`,
-            zeit,
-            nachgeliefert: false,
+        expect([...u.ablage.ordner_.get(appId)!]).to.deep.equal([
+            ['org-thoughtcrime-securesms', 'Signal'],
+            ['letzte', 'Letzte Benachrichtigung'],
+        ]);
+        for (const ordner of ['org-thoughtcrime-securesms', 'letzte']) {
+            const wert = (n: string): ioBroker.StateValue | undefined =>
+                u.ablage.zustaende_.get(`${appId}.benachrichtigungen.${ordner}.${n}`)?.val;
+            expect(wert('titel')).to.equal('😀'.repeat(20));
+            expect(wert('text')).to.equal(`${'x'.repeat(19)}😀`);
+            expect(JSON.parse(wert('json') as string)).to.deep.equal({
+                app: 'Signal',
+                paket: 'org.thoughtcrime.securesms',
+                titel: '😀'.repeat(20),
+                text: `${'x'.repeat(19)}😀`,
+                zeit,
+                nachgeliefert: false,
+            });
+        }
+        g.schliesse();
+    });
+
+    it('Auswahl: legt je App einen Ordner an, benennt um, entfernt abgewählte und lässt letzte stehen', async () => {
+        const { g, appId } = await mitHandydaten(4);
+        g.sende({ t: 'benachrichtigung', app: 'Signal', paket: 'org.signal', text: 'Hallo', zeit: vorhin() });
+        await bis(() => u.ablage.geschrieben.some(e => e.includes('.letzte.json=')));
+        g.sende({
+            t: 'auswahl',
+            apps: [
+                { paket: 'org.signal', app: 'Signal Messenger' },
+                { paket: 'com.whatsapp', app: 'WhatsApp' },
+                { paket: 'com.whatsapp', app: 'WhatsApp Business' },
+            ],
         });
+        await bis(() => u.ablage.ordner_.get(appId)?.has('com-whatsapp') === true);
+        expect(Object.fromEntries(u.ablage.ordner_.get(appId)!)).to.deep.equal({
+            'org-signal': 'Signal Messenger',
+            letzte: 'Letzte Benachrichtigung',
+            'com-whatsapp': 'WhatsApp Business',
+        });
+        g.sende({ t: 'auswahl', apps: [{ paket: 'de.dkb.portalapp', app: 'DKB' }] });
+        await bis(() => u.ablage.ordner_.get(appId)?.has('de-dkb-portalapp') === true);
+        expect([...u.ablage.ordner_.get(appId)!.keys()].sort()).to.deep.equal(['de-dkb-portalapp', 'letzte']);
+        expect(u.ablage.zustaende_.has(`${appId}.benachrichtigungen.org-signal.text`)).to.equal(false);
+        expect(u.ablage.zustaende_.get(`${appId}.benachrichtigungen.letzte.text`)?.val).to.equal('Hallo');
+        g.sende({ t: 'auswahl', apps: [] });
+        await bis(() => !u.ablage.ordner_.get(appId)?.has('de-dkb-portalapp'));
+        expect([...u.ablage.ordner_.get(appId)!.keys()]).to.deep.equal(['letzte']);
+        expect(u.log.join('\n')).to.not.contain('DKB').and.not.contain('dkb');
+        g.schliesse();
+    });
+
+    it('Auswahl bei ausgeschalteten Benachrichtigungen: fehler aus, kein Ordner', async () => {
+        const { g, appId } = await kopple('familie', 4);
+        g.sende({ t: 'auswahl', apps: [{ paket: 'org.signal', app: 'Signal' }] });
+        expect(await g.naechste()).to.include({ t: 'fehler', code: 'aus' });
+        expect(u.ablage.ordner_.has(appId)).to.equal(false);
         g.schliesse();
     });
 

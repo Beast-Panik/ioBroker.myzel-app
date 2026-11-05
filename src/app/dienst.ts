@@ -22,8 +22,9 @@ const NEUBERECHNUNG_MS = 2000;
 export const PROTOKOLLVERSIONEN: number[] = gemeinsam.$defs.version.enum;
 export const NEUESTE_VERSION = Math.max(...PROTOKOLLVERSIONEN);
 
-export const appPruefer = (): Nachrichtenpruefer =>
-    new Nachrichtenpruefer(appAnAdapter, [gemeinsam], PROTOKOLLVERSIONEN);
+// versionen nur für Tests, die einen älteren Adapter nachstellen
+export const appPruefer = (versionen = PROTOKOLLVERSIONEN): Nachrichtenpruefer =>
+    new Nachrichtenpruefer(appAnAdapter, [gemeinsam], versionen);
 
 export const adapterPruefer = (): Nachrichtenpruefer =>
     new Nachrichtenpruefer(adapterAnApp, [gemeinsam], PROTOKOLLVERSIONEN);
@@ -213,6 +214,7 @@ export class Dienst implements Anmeldeziel {
                 akku: m => handy.akku(m),
                 anruf: m => handy.anruf(m),
                 benachrichtigung: m => handy.benachrichtigung(m),
+                auswahl: m => handy.auswahl(m),
                 angezeigt: m => this.hinweise.angezeigt(appId, m.id as string),
             },
             grenzen: this.o.grenzen,

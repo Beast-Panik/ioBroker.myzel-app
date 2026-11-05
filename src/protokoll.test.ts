@@ -15,6 +15,7 @@ const geraet = { android: '15', appVersion: '1.0.0' };
 
 const gueltigAnAdapter: Record<string, unknown>[] = [
     { t: 'hallo', v: 3, app: 'abcdefgh', zugang, geraet },
+    { t: 'hallo', v: 4, app: 'abcdefgh', zugang, geraet },
     { t: 'koppeln', v: 3, geheimnis: 'b'.repeat(22), name: 'Tablet Flur', geraet },
     { t: 'abo', ids: ['zigbee.0.lampe.state', 'hm-rpc.0.ABC:1.LEVEL', 'javascript.0.Küche.Temperatur'] },
     { t: 'setze', n: 7, id: 'zigbee.0.lampe.state', val: true },
@@ -29,6 +30,8 @@ const gueltigAnAdapter: Record<string, unknown>[] = [
         text: 'Bin gleich da',
         zeit,
     },
+    { t: 'auswahl', apps: [{ paket: 'org.thoughtcrime.securesms', app: 'Signal' }] },
+    { t: 'auswahl', apps: [] },
     { t: 'angezeigt', id: 'Ab3_-xY9' },
 ];
 
@@ -41,6 +44,14 @@ const ungueltigAnAdapter: [string, Record<string, unknown>][] = [
     ['Akku 101', { t: 'akku', stand: 101, laedt: false, zeit }],
     ['Leerzeichen in Rufnummer', { t: 'anruf', status: 'klingelt', nummer: '030 123', zeit }],
     ['Schrägstrich im Paketnamen', { t: 'benachrichtigung', app: 'X', paket: '../etc', zeit }],
+    ['Version 5', { t: 'hallo', v: 5, app: 'abcdefgh', zugang, geraet }],
+    ['Auswahl mit Schrägstrich im Paketnamen', { t: 'auswahl', apps: [{ paket: '../etc', app: 'X' }] }],
+    ['Auswahl ohne Namen', { t: 'auswahl', apps: [{ paket: 'org.signal' }] }],
+    ['Auswahl mit leerem Namen', { t: 'auswahl', apps: [{ paket: 'org.signal', app: '' }] }],
+    [
+        'Auswahl mit 101 Apps',
+        { t: 'auswahl', apps: Array.from({ length: 101 }, (_, i) => ({ paket: `a.b${i}`, app: 'X' })) },
+    ],
     ['Nachricht der Gegenrichtung', { t: 'gekoppelt', app: 'abcdefgh', zugang }],
 ];
 
@@ -109,7 +120,7 @@ const gueltigAnApp: Record<string, unknown>[] = [
     { t: 'werte', werte: { 'zigbee.0.lampe.state': { val: true, ack: true, ts: zeit }, 'x.0.leer': null } },
     { t: 'quittung', n: 7, ok: false, fehler: 'rechte' },
     { t: 'hinweis', id: 'Ab3_-xY9', titel: 'Waschmaschine', text: 'Fertig', wichtigkeit: 'normal', zeit },
-    { t: 'fehler', code: 'version', unterstuetzt: [3] },
+    { t: 'fehler', code: 'version', unterstuetzt: [3, 4] },
 ];
 
 const ungueltigAnApp: [string, Record<string, unknown>][] = [

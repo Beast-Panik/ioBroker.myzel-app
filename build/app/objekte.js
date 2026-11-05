@@ -30,7 +30,9 @@ var objekte_exports = {};
 __export(objekte_exports, {
   IoBrokerAblage: () => IoBrokerAblage,
   IoBrokerQuelle: () => IoBrokerQuelle,
-  appIdAus: () => appIdAus
+  LETZTE: () => LETZTE,
+  appIdAus: () => appIdAus,
+  ordnerFuer: () => ordnerFuer
 });
 module.exports = __toCommonJS(objekte_exports);
 var import_gemeinsam_schema = __toESM(require("../../protokoll/v1/gemeinsam.schema.json"));
@@ -45,7 +47,6 @@ const text = (de, en) => ({
 const KANAELE = {
   akku: { de: "Akku", en: "Battery" },
   anruf: { de: "Anruf", en: "Call" },
-  benachrichtigung: { de: "Benachrichtigung", en: "Notification" },
   hinweis: { de: "Hinweis", en: "Notice" }
 };
 const DATENPUNKTE = {
@@ -74,15 +75,24 @@ const DATENPUNKTE = {
   "anruf.richtung": text("Richtung", "Direction"),
   "anruf.nummer": { ...text("Rufnummer", "Phone number"), role: "text.phone" },
   "anruf.name": text("Name", "Name"),
-  "benachrichtigung.app": text("App", "App"),
-  "benachrichtigung.paket": text("Paketname", "Package name"),
-  "benachrichtigung.titel": text("Titel", "Title"),
-  "benachrichtigung.text": text("Text", "Text"),
-  "benachrichtigung.zeit": { name: { de: "Zeit", en: "Time" }, type: "number", role: "date", ...nurLesen },
-  "benachrichtigung.json": { ...text("Alles als JSON", "All as JSON"), role: "json" },
   "hinweis.senden": { ...text("Hinweis senden", "Send notice"), write: true },
   "hinweis.status": text("Hinweisstatus", "Notice state")
 };
+const BENACHRICHTIGUNG = {
+  app: text("App", "App"),
+  paket: text("Paketname", "Package name"),
+  titel: text("Titel", "Title"),
+  text: text("Text", "Text"),
+  zeit: { name: { de: "Zeit", en: "Time" }, type: "number", role: "date", ...nurLesen },
+  json: { ...text("Alles als JSON", "All as JSON"), role: "json" }
+};
+const LETZTE = "letzte";
+const LETZTE_NAME = { de: "Letzte Benachrichtigung", en: "Latest notification" };
+const BENACHRICHTIGUNGEN_NAME = { de: "Benachrichtigungen", en: "Notifications" };
+function ordnerFuer(paket) {
+  const ordner = paket.replaceAll(".", "-");
+  return ordner === LETZTE ? void 0 : ordner;
+}
 const pruefeAppId = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/appId` }, [import_gemeinsam_schema.default]);
 function appIdAus(namespace, objektId, name) {
   const praefix = `${namespace}.apps.`;
@@ -140,6 +150,49 @@ class IoBrokerAblage {
   }
   async richteEin(appId) {
     await this.sichere(appId, "hinweis.senden");
+    const alt = `apps.${appId}.benachrichtigung`;
+    if (await this.adapter.getObjectAsync(alt)) {
+      await this.adapter.delObjectAsync(alt, { recursive: true });
+      this.adapter.log.info(`App ${appId}: Kanal benachrichtigung entfernt, jetzt unter benachrichtigungen`);
+    }
+  }
+  async benachrichtigungsordner(appId) {
+    const praefix = `${this.adapter.namespace}.apps.${appId}.benachrichtigungen.`;
+    const ansicht = await this.adapter.getObjectViewAsync("system", "channel", {
+      startkey: praefix,
+      endkey: `${praefix}\u9999`
+    });
+    return ansicht.rows.map((r) => r.id.slice(praefix.length)).filter((ordner) => ordner !== LETZTE && ordner.length > 0 && !ordner.includes("."));
+  }
+  // Nur bei neuem Namen geschrieben: Jede Auswahl nennt alle Apps, ihre Ordner bleiben meist, wie sie sind.
+  async legeBenachrichtigungsordner(appId, ordner, name) {
+    var _a, _b;
+    const kanal = `apps.${appId}.benachrichtigungen.${ordner}`;
+    await this.sichereBenachrichtigungen(appId);
+    if (((_b = (_a = await this.adapter.getObjectAsync(kanal)) == null ? void 0 : _a.common) == null ? void 0 : _b.name) !== name) {
+      await this.adapter.extendObjectAsync(kanal, { type: "channel", common: { name }, native: {} });
+    }
+    await this.sichereZustaende(kanal);
+  }
+  async entferneBenachrichtigungsordner(appId, ordner) {
+    const kanal = `apps.${appId}.benachrichtigungen.${ordner}`;
+    await this.adapter.delObjectAsync(kanal, { recursive: true });
+    this.angelegt.delete(kanal);
+  }
+  async schreibeBenachrichtigung(appId, ordner, name, werte, ts) {
+    const kanal = `apps.${appId}.benachrichtigungen.${ordner}`;
+    if (!this.angelegt.has(kanal)) {
+      await this.sichereBenachrichtigungen(appId);
+      await this.adapter.setObjectNotExistsAsync(kanal, {
+        type: "channel",
+        common: { name: ordner === LETZTE ? LETZTE_NAME : name },
+        native: {}
+      });
+      await this.sichereZustaende(kanal);
+    }
+    for (const [n, val] of Object.entries(werte)) {
+      await this.adapter.setStateAsync(`${kanal}.${n}`, { val, ack: true, ts });
+    }
   }
   async hinweise(appId) {
     var _a;
@@ -202,6 +255,23 @@ class IoBrokerAblage {
   zustand(appId, name) {
     return this.adapter.getStateAsync(`apps.${appId}.${name}`);
   }
+  async sichereBenachrichtigungen(appId) {
+    const ordner = `apps.${appId}.benachrichtigungen`;
+    if (!this.angelegt.has(ordner)) {
+      await this.adapter.setObjectNotExistsAsync(ordner, {
+        type: "folder",
+        common: { name: BENACHRICHTIGUNGEN_NAME },
+        native: {}
+      });
+      this.angelegt.add(ordner);
+    }
+  }
+  async sichereZustaende(kanal) {
+    for (const [n, common] of Object.entries(BENACHRICHTIGUNG)) {
+      await this.adapter.setObjectNotExistsAsync(`${kanal}.${n}`, { type: "state", common, native: {} });
+    }
+    this.angelegt.add(kanal);
+  }
   // Erst beim ersten Wert: So entstehen keine Datenpunkte für ausgeschaltete Handydaten.
   async sichere(appId, name) {
     const id = `apps.${appId}.${name}`;
@@ -252,6 +322,8 @@ class IoBrokerQuelle {
 0 && (module.exports = {
   IoBrokerAblage,
   IoBrokerQuelle,
-  appIdAus
+  LETZTE,
+  appIdAus,
+  ordnerFuer
 });
 //# sourceMappingURL=objekte.js.map

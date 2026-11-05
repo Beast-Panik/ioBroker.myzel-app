@@ -2,7 +2,15 @@
 import type { Protokoll } from '../src/basis/grenzen';
 import { Katalog, type Katalogquelle } from '../src/app/katalog';
 import type { Zeile } from '../src/app/konfiguration';
-import type { AppDaten, Appablage, Appwerte, Datenpunktname, Hinweisstand } from '../src/app/objekte';
+import {
+    type AppDaten,
+    type Appablage,
+    type Appwerte,
+    type Benachrichtigungswerte,
+    type Datenpunktname,
+    type Hinweisstand,
+    LETZTE,
+} from '../src/app/objekte';
 import type { Karte, Profil } from '../src/app/rechte';
 import type { Umstellungsablage } from '../src/app/umstellung';
 import type { Wert, Zustandsquelle } from '../src/app/werte';
@@ -20,6 +28,8 @@ export class Speicherablage implements Appablage, Umstellungsablage {
     public readonly werte_ = new Map<string, Appwerte>();
     public readonly zustaende_ = new Map<string, ioBroker.State>();
     public readonly hinweise_ = new Map<string, Hinweisstand>();
+    // Je App die Ordner unter benachrichtigungen mit ihrem Namen, letzte eingeschlossen
+    public readonly ordner_ = new Map<string, Map<string, string>>();
     // Reihenfolge der Schreibvorgänge mit ts, je Eintrag "<appId>.<name>=<wert>@<ts>"
     public readonly geschrieben: string[] = [];
     // Für Tests, die ein Scheitern der Datenbank brauchen
@@ -82,6 +92,51 @@ export class Speicherablage implements Appablage, Umstellungsablage {
     }
     public richteEin(): Promise<void> {
         return Promise.resolve();
+    }
+    public benachrichtigungsordner(appId: string): Promise<string[]> {
+        return Promise.resolve([...(this.ordner_.get(appId)?.keys() ?? [])].filter(o => o !== LETZTE));
+    }
+    public legeBenachrichtigungsordner(appId: string, ordner: string, name: string): Promise<void> {
+        if (this.scheitern) {
+            return Promise.reject(new Error('Datenbank weg'));
+        }
+        this.ordnerVon(appId).set(ordner, name);
+        return Promise.resolve();
+    }
+    public entferneBenachrichtigungsordner(appId: string, ordner: string): Promise<void> {
+        this.ordnerVon(appId).delete(ordner);
+        for (const id of [...this.zustaende_.keys()]) {
+            if (id.startsWith(`${appId}.benachrichtigungen.${ordner}.`)) {
+                this.zustaende_.delete(id);
+            }
+        }
+        return Promise.resolve();
+    }
+    public schreibeBenachrichtigung(
+        appId: string,
+        ordner: string,
+        name: string,
+        werte: Benachrichtigungswerte,
+        ts: number,
+    ): Promise<void> {
+        if (this.scheitern) {
+            return Promise.reject(new Error('Datenbank weg'));
+        }
+        const da = this.ordnerVon(appId);
+        if (!da.has(ordner)) {
+            da.set(ordner, ordner === LETZTE ? 'Letzte Benachrichtigung' : name);
+        }
+        for (const [n, val] of Object.entries(werte)) {
+            const id = `${appId}.benachrichtigungen.${ordner}.${n}`;
+            this.geschrieben.push(`${id}=${String(val)}@${ts}`);
+            this.zustaende_.set(id, { val, ack: true, ts, lc: ts, from: 'myzel-app.0' });
+        }
+        return Promise.resolve();
+    }
+    private ordnerVon(appId: string): Map<string, string> {
+        const da = this.ordner_.get(appId) ?? new Map<string, string>();
+        this.ordner_.set(appId, da);
+        return da;
     }
     public hinweise(appId: string): Promise<Hinweisstand> {
         const stand = this.hinweise_.get(appId) ?? { warteschlange: [], letzter: '', bearbeitet: 0, pruefsumme: '' };

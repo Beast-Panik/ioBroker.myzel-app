@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.2.2",
+        "version": "0.3.0",
         "news": {
+            "0.3.0": {
+                "en": "Notifications in their own folder: per selected app a subfolder with app, package, title, text, time and JSON, plus latest for the newest of all apps. Protocol 4: the app reports its selection and the folders appear at once; deselected apps lose theirs. The old channel notification is removed on start",
+                "de": "Benachrichtigungen im eigenen Ordner: je gewählter App ein Unterordner mit App, Paket, Titel, Text, Zeit und JSON, dazu letzte für die neueste aller Apps. Protokoll 4: Die App meldet ihre Auswahl, die Ordner entstehen sofort; abgewählte Apps verlieren ihren. Der alte Kanal benachrichtigung wird beim Start entfernt"
+            },
             "0.2.2": {
                 "en": "Fix: after switching quickly, the app could keep showing the wrong state when a device adapter confirmed with an older timestamp; the last reported change now always counts",
                 "de": "Fehler behoben: Nach schnellem Schalten konnte die App den falschen Stand behalten, wenn ein Geräteadapter mit älterem Zeitstempel bestätigte; jetzt gilt immer die zuletzt gemeldete Änderung"

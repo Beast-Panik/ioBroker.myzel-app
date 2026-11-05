@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myzel.local/protokoll/app/v1/app-an-adapter.schema.json",
-  "title": "Nachrichten von der App an den Adapter, Protokoll Version 3",
+  "title": "Nachrichten von der App an den Adapter, Protokoll Version 3 und 4",
   "description": "Jede Nachricht ist ein JSON-Objekt in einem WebSocket-Textframe, höchstens 64 KiB. Unbekannte Felder sind Fehler.",
   "oneOf": [
     { "$ref": "#/$defs/hallo" },
@@ -11,6 +11,7 @@
     { "$ref": "#/$defs/akku" },
     { "$ref": "#/$defs/anruf" },
     { "$ref": "#/$defs/benachrichtigung" },
+    { "$ref": "#/$defs/auswahl" },
     { "$ref": "#/$defs/angezeigt" }
   ],
   "$defs": {
@@ -104,6 +105,28 @@
         "text": { "type": "string", "maxLength": 16000 },
         "zeit": { "$ref": "gemeinsam.schema.json#/$defs/zeit" },
         "nachgeliefert": { "type": "boolean" }
+      }
+    },
+    "auswahl": {
+      "description": "Ab Version 4: alle Apps, deren Benachrichtigungen die App weitergibt; ersetzt die bisherige Auswahl. Der Adapter legt je App einen Ordner unter benachrichtigungen an und entfernt die Ordner abgewählter Apps",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "apps"],
+      "properties": {
+        "t": { "const": "auswahl" },
+        "apps": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["paket", "app"],
+            "properties": {
+              "paket": { "$ref": "#/$defs/benachrichtigung/properties/paket" },
+              "app": { "$ref": "#/$defs/benachrichtigung/properties/app" }
+            }
+          }
+        }
       }
     },
     "angezeigt": {
