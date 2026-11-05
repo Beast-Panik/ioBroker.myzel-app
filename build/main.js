@@ -105,6 +105,13 @@ class MyzelApp extends utils.Adapter {
     for (const mangel of (0, import_rechte.kartenmaengel)(katalog)) {
       this.log.warn(mangel);
     }
+    const geordnet = await ablage.ordneKarten((karten) => (0, import_konfiguration.nachRaeumen)(karten, katalog.raeume(), katalog.sprache)).catch((fehler2) => {
+      this.log.warn(`Karten nicht nach R\xE4umen geordnet: ${fehler2.message}`);
+      return false;
+    });
+    if (geordnet) {
+      this.log.info("Karten in den Einstellungen nach R\xE4umen geordnet");
+    }
     const server = await (0, import_server.starteServer)({
       adapterId: identitaet.adapterId,
       namespace: this.namespace,

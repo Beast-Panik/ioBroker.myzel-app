@@ -239,6 +239,17 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
         });
     }
 
+    // Frisch gelesen: Geordnet wird, was gerade gespeichert ist. true, wenn sich die Reihenfolge geändert hat.
+    public async ordneKarten(ordnung: (karten: unknown) => unknown[] | undefined): Promise<boolean> {
+        const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
+        const karten = ordnung((objekt?.native as { karten?: unknown } | undefined)?.karten);
+        if (!karten) {
+            return false;
+        }
+        await this.adapter.updateConfig({ karten });
+        return true;
+    }
+
     public async loescheObjekt(id: string): Promise<void> {
         await this.adapter.delObjectAsync(id);
     }

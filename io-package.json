@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.2.0",
+        "version": "0.2.1",
         "news": {
+            "0.2.1": {
+                "en": "Cards in the instance settings are sorted by room like in the app, cards without a room last",
+                "de": "Karten in den Instanzeinstellungen nach Räumen geordnet wie in der App, Karten ohne Raum zuletzt"
+            },
             "0.2.0": {
                 "en": "Cards instead of datapoints: lamps, switches, measurements with up to four values and thermostats with a room, in their own Cards tab of the instance settings; profiles in their own tab release rooms and single cards; the device manager shows only apps; apps get only finished cards with protocol 3; devices and profiles move into the instance settings on the first start",
                 "de": "Karten statt Datenpunkte: Lampen, Schalter, Messwerte mit bis zu vier Werten und Thermostate mit Raum, im eigenen Reiter Karten der Instanzeinstellungen; Profile im eigenen Reiter geben Räume und einzelne Karten frei; der Gerätemanager zeigt nur Apps; Apps bekommen nur fertige Karten mit Protokoll 3; Geräte und Profile kommen beim ersten Start in die Instanzeinstellungen"

@@ -13,7 +13,7 @@
     "Room": "Room",
     "Apps": "Apps",
     "Cards": "Cards",
-    "Cards hint": "Only cards reach the phones, never single data points. Choose a data point for each part the card should show; parts without a data point are missing on the card. Profiles release cards via their room or individually. Saving restarts the instance; connected apps are briefly disconnected.",
+    "Cards hint": "Only cards reach the phones, never single data points. Choose a data point for each part the card should show; parts without a data point are missing on the card. Profiles release cards via their room or individually. Saving restarts the instance; connected apps are briefly disconnected. The list is sorted by room, cards without a room last; a new or moved card is in its place after saving and reloading the page.",
     "Name": "Name",
     "Name is required": "Please enter a name",
     "Type": "Type",

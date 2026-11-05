@@ -154,8 +154,9 @@ tests.integration(path.join(__dirname, '..'), {
                     expect(await harness.objects.getObjectAsync(`myzel-app.0.${id}`), id).to.equal(null);
                 }
                 const { karten, profile } = (await harness.objects.getObjectAsync('system.adapter.myzel-app.0')).native;
-                expect(karten.map(k => k.id)).to.deep.equal(['lampe', 'klima', 'geheim', 'altlampe', 'altschalter']);
-                expect(karten[3]).to.deep.equal({
+                // Danach nach Räumen geordnet: Testraum, dann ohne Raum, je nach Namen
+                expect(karten.map(k => k.id)).to.deep.equal(['klima', 'lampe', 'altlampe', 'altschalter', 'geheim']);
+                expect(karten[2]).to.deep.equal({
                     id: 'altlampe',
                     name: 'Altlampe',
                     typ: 'lampe',

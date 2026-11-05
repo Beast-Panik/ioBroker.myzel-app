@@ -27,7 +27,7 @@ G1: Geräte als Kacheln (KONZEPT-GERAETE.md). Die Aktion „Geräte“ im Gerät
 
 K1: Karten statt Datenpunkte (KONZEPT-KARTEN.md). Die Aktion „Karten“ im Gerätemanager legt Karten als Objekte `karten.<id>` an: Lampe, Schalter, Messwert mit bis zu vier Werten und Thermostat, jede mit Raum und je Teil einem Datenpunkt. Die Karten stehen im Gerätemanager neben den Apps und lassen sich dort bedienen. Profile geben Räume frei (alle Karten des Raums) und einzelne Karten, auch mit anderem Recht; gesperrte Karten fehlen. Seit K3 liegen Karten und Profile in eigenen Reitern der Instanzeinstellungen, siehe dort. Karten mit Datenpunkten der Apps gibt nur eine Einzelfreigabe frei. Apps bekommen die Karten mit Einheit, Bereich und Schritt für Regler in Protokoll 3; Apps mit Protokoll 1 oder 2 bekommen `fehler version`. `abo` und `setze` gehen weiter je Datenpunkt, nur für Teile freigegebener Karten. Beim ersten Start werden Geräte zu Lampenkarten im Raum ihres ersten Teils, Profile verlieren die Freigaben und Sperren von Datenpunkten, mit Warnung im Log.
 
-K3: Karten und Profile haben je einen eigenen Reiter in den Instanzeinstellungen: Apps, Karten, Profile, Einstellungen. Der Gerätemanager im Reiter Apps und damit der Reiter „Geräte“ des Admins zeigen nur noch Apps. Karten und Profile stehen in `native.karten` und `native.profile`; neue bekommen eine feste ID aus der Zeit. Die Auswahllisten im Profil zeigen Räume und Karten mit Namen. Speichern startet die Instanz neu, verbundene Apps sind wenige Sekunden getrennt. Beim Start meldet der Adapter unbrauchbare Zeilen und unpassende Datenpunkte im Log. Geräte, Karten- und Profilobjekte früherer Stände übernimmt der Start in die Einstellungen und löscht die Objekte.
+K3: Karten und Profile haben je einen eigenen Reiter in den Instanzeinstellungen: Apps, Karten, Profile, Einstellungen. Der Gerätemanager im Reiter Apps und damit der Reiter „Geräte“ des Admins zeigen nur noch Apps. Karten und Profile stehen in `native.karten` und `native.profile`; neue bekommen eine feste ID aus der Zeit. Die Auswahllisten im Profil zeigen Räume und Karten mit Namen. Speichern startet die Instanz neu, verbundene Apps sind wenige Sekunden getrennt. Beim Start meldet der Adapter unbrauchbare Zeilen und unpassende Datenpunkte im Log. Die Karten ordnet er nach Räumen wie in der App (0.2.1). Geräte, Karten- und Profilobjekte früherer Stände übernimmt der Start in die Einstellungen und löscht die Objekte.
 
 ## Entwickeln
 
@@ -93,6 +93,10 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.2.1
+
+Karten im Reiter „Karten“ nach Räumen geordnet wie in der App, Karten ohne Raum zuletzt, im Raum nach Namen. Der Adapter ordnet beim Start und schreibt nur, wenn sich die Reihenfolge geändert hat; dann startet die Instanz einmal mehr neu
 
 ### 0.2.0
 

@@ -13,7 +13,7 @@
     "Room": "Raum",
     "Apps": "Apps",
     "Cards": "Karten",
-    "Cards hint": "Nur Karten erreichen die Handys, nie einzelne Datenpunkte. Je Teil, den die Karte zeigen soll, einen Datenpunkt wählen; Teile ohne Datenpunkt fehlen auf der Karte. Profile geben Karten über ihren Raum oder einzeln frei. Speichern startet die Instanz neu, verbundene Apps sind dabei kurz getrennt.",
+    "Cards hint": "Nur Karten erreichen die Handys, nie einzelne Datenpunkte. Je Teil, den die Karte zeigen soll, einen Datenpunkt wählen; Teile ohne Datenpunkt fehlen auf der Karte. Profile geben Karten über ihren Raum oder einzeln frei. Speichern startet die Instanz neu, verbundene Apps sind dabei kurz getrennt. Die Liste ist nach Räumen geordnet, Karten ohne Raum zuletzt; eine neue oder verschobene Karte steht nach dem Speichern und Neuladen der Seite an ihrem Platz.",
     "Name": "Name",
     "Name is required": "Bitte einen Namen eingeben",
     "Type": "Typ",

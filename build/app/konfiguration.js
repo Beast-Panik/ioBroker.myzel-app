@@ -22,6 +22,7 @@ __export(konfiguration_exports, {
   karteAusZeile: () => karteAusZeile,
   kartenoptionen: () => kartenoptionen,
   liesKonfiguration: () => liesKonfiguration,
+  nachRaeumen: () => nachRaeumen,
   profilAusZeile: () => profilAusZeile,
   raumoptionen: () => raumoptionen,
   zeileAusKarte: () => zeileAusKarte,
@@ -145,12 +146,42 @@ function kartenoptionen(roh, raeume) {
     };
   }).sort(nachText);
 }
+function nachRaeumen(roh, raeume, sprache) {
+  if (!Array.isArray(roh)) {
+    return void 0;
+  }
+  const raumname = new Map(raeume.map((r) => [r.id, (0, import_rechte.text)(r.name, sprache, r.id)]));
+  const vergleiche = new Intl.Collator(sprache).compare;
+  const schluessel = (z) => {
+    if (!z || typeof z !== "object" || Array.isArray(z)) {
+      return void 0;
+    }
+    const zeile = z;
+    const raum = eintrag(zeile.raum);
+    const name = raumname.get(raum);
+    return name === void 0 ? ["1", "", "", eintrag(zeile.name), eintrag(zeile.id)] : ["0", name, raum, eintrag(zeile.name), eintrag(zeile.id)];
+  };
+  const sortiert = roh.map((z) => ({ z, s: schluessel(z) })).sort((a, b) => {
+    if (!a.s || !b.s) {
+      return (a.s ? 0 : 1) - (b.s ? 0 : 1);
+    }
+    for (let i = 0; i < a.s.length; i++) {
+      const unterschied = vergleiche(a.s[i], b.s[i]) || (a.s[i] < b.s[i] ? -1 : a.s[i] > b.s[i] ? 1 : 0);
+      if (unterschied !== 0) {
+        return unterschied;
+      }
+    }
+    return 0;
+  }).map(({ z }) => z);
+  return sortiert.every((z, i) => z === roh[i]) ? void 0 : sortiert;
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   bezeichnungsfeld,
   karteAusZeile,
   kartenoptionen,
   liesKonfiguration,
+  nachRaeumen,
   profilAusZeile,
   raumoptionen,
   zeileAusKarte,

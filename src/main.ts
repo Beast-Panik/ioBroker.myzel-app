@@ -2,7 +2,7 @@ import * as utils from '@iobroker/adapter-core';
 import gemeinsam from '../protokoll/v1/gemeinsam.schema.json';
 import { type Betrieb, Geraete, Verwaltung, adminOffen } from './admin/geraete';
 import { Katalog } from './app/katalog';
-import { type Option, kartenoptionen, liesKonfiguration, raumoptionen } from './app/konfiguration';
+import { type Option, kartenoptionen, liesKonfiguration, nachRaeumen, raumoptionen } from './app/konfiguration';
 import { IoBrokerAblage, IoBrokerQuelle } from './app/objekte';
 import { kartenmaengel } from './app/rechte';
 import { stelleUm } from './app/umstellung';
@@ -86,6 +86,16 @@ class MyzelApp extends utils.Adapter {
         this.log.info(`${katalog.anzahl} Datenpunkte im Katalog`);
         for (const mangel of kartenmaengel(katalog)) {
             this.log.warn(mangel);
+        }
+        // Vor dem Server: Ändert sich die Reihenfolge, startet ioBroker die Instanz gleich noch einmal neu.
+        const geordnet = await ablage
+            .ordneKarten(karten => nachRaeumen(karten, katalog.raeume(), katalog.sprache))
+            .catch((fehler: Error) => {
+                this.log.warn(`Karten nicht nach Räumen geordnet: ${fehler.message}`);
+                return false;
+            });
+        if (geordnet) {
+            this.log.info('Karten in den Einstellungen nach Räumen geordnet');
         }
         const server = await starteServer({
             adapterId: identitaet.adapterId,

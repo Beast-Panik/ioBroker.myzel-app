@@ -176,6 +176,17 @@ class IoBrokerAblage {
       profile: [...bisher(native.profile), ...profile]
     });
   }
+  // Frisch gelesen: Geordnet wird, was gerade gespeichert ist. true, wenn sich die Reihenfolge geändert hat.
+  async ordneKarten(ordnung) {
+    var _a;
+    const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
+    const karten = ordnung((_a = objekt == null ? void 0 : objekt.native) == null ? void 0 : _a.karten);
+    if (!karten) {
+      return false;
+    }
+    await this.adapter.updateConfig({ karten });
+    return true;
+  }
   async loescheObjekt(id) {
     await this.adapter.delObjectAsync(id);
   }

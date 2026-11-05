@@ -180,3 +180,44 @@ export function kartenoptionen(roh: unknown, raeume: Aufzaehlung[]): Option[] {
         })
         .sort(nachText);
 }
+
+/**
+ * Reihenfolge im Reiter Karten: nach Raum wie in der App, Karten ohne Raum oder mit einem Raum, den es nicht mehr gibt,
+ * zuletzt, im Raum nach Namen. Der Admin zeigt die Liste in der gespeicherten Reihenfolge und sortiert nicht selbst.
+ * Liefert undefined, wenn die Reihenfolge schon stimmt; jeder Gleichstand endet bei der ID, damit sie sich nie hin und her
+ * ändert. Zeilen, die keine sind, kommen unverändert ans Ende.
+ */
+export function nachRaeumen(roh: unknown, raeume: Aufzaehlung[], sprache: string): unknown[] | undefined {
+    if (!Array.isArray(roh)) {
+        return undefined;
+    }
+    const raumname = new Map(raeume.map(r => [r.id, text(r.name, sprache, r.id)]));
+    const vergleiche = new Intl.Collator(sprache).compare;
+    const schluessel = (z: unknown): string[] | undefined => {
+        if (!z || typeof z !== 'object' || Array.isArray(z)) {
+            return undefined;
+        }
+        const zeile = z as Zeile;
+        const raum = eintrag(zeile.raum);
+        const name = raumname.get(raum);
+        return name === undefined
+            ? ['1', '', '', eintrag(zeile.name), eintrag(zeile.id)]
+            : ['0', name, raum, eintrag(zeile.name), eintrag(zeile.id)];
+    };
+    const sortiert = roh
+        .map(z => ({ z, s: schluessel(z) }))
+        .sort((a, b) => {
+            if (!a.s || !b.s) {
+                return (a.s ? 0 : 1) - (b.s ? 0 : 1);
+            }
+            for (let i = 0; i < a.s.length; i++) {
+                const unterschied = vergleiche(a.s[i], b.s[i]) || (a.s[i] < b.s[i] ? -1 : a.s[i] > b.s[i] ? 1 : 0);
+                if (unterschied !== 0) {
+                    return unterschied;
+                }
+            }
+            return 0;
+        })
+        .map(({ z }) => z);
+    return sortiert.every((z, i) => z === roh[i]) ? undefined : sortiert;
+}

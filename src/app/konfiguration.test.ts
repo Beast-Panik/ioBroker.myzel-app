@@ -3,10 +3,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Protokoll } from '../basis/grenzen';
 import {
+    type Zeile,
     bezeichnungsfeld,
     karteAusZeile,
     kartenoptionen,
     liesKonfiguration,
+    nachRaeumen,
     profilAusZeile,
     raumoptionen,
     zeileAusKarte,
@@ -178,6 +180,45 @@ describe('Karten und Profile aus den Instanzeinstellungen', () => {
             { value: 'tuer', label: { en: 'Tür (Switch, no room)', de: 'Tür (Schalter, ohne Raum)' } },
         ]);
         expect(kartenoptionen(undefined, raeume)).to.deep.equal([]);
+    });
+});
+
+describe('Reihenfolge der Karten in den Einstellungen', () => {
+    const raeume = [
+        { id: 'enum.rooms.wohnzimmer', name: { de: 'Wohnzimmer', en: 'Living room' }, mitglieder: [] },
+        { id: 'enum.rooms.kueche', name: { de: 'Küche', en: 'Kitchen' }, mitglieder: [] },
+        { id: 'enum.rooms.bad', name: 'Bad', mitglieder: [] },
+    ];
+    const karte = (id: string, name: string, raum = ''): Zeile => ({ id, name, typ: 'schalter', raum });
+
+    it('ordnet nach Raumnamen in der Systemsprache, ohne Raum zuletzt, im Raum nach Namen', () => {
+        const zeilen = [
+            karte('k1', 'Zeitschaltuhr', 'enum.rooms.wohnzimmer'),
+            karte('k2', 'Außen'),
+            karte('k3', 'Herd', 'enum.rooms.kueche'),
+            karte('k4', 'Lampe', 'enum.rooms.weg'),
+            karte('k5', 'Ärger', 'enum.rooms.wohnzimmer'),
+            'kaputt',
+            karte('k6', 'Lüfter', 'enum.rooms.bad'),
+        ];
+        const ids = (z: unknown[] | undefined): unknown[] =>
+            (z ?? []).map(k => (typeof k === 'string' ? k : (k as Zeile).id));
+        expect(ids(nachRaeumen(zeilen, raeume, 'de'))).to.deep.equal(['k6', 'k3', 'k5', 'k1', 'k2', 'k4', 'kaputt']);
+        expect(ids(nachRaeumen(zeilen, raeume, 'en'))).to.deep.equal(['k6', 'k3', 'k5', 'k1', 'k2', 'k4', 'kaputt']);
+        // Garten vor Küche, aber Kitchen vor Yard
+        const garten = [...raeume, { id: 'enum.rooms.garten', name: { de: 'Garten', en: 'Yard' }, mitglieder: [] }];
+        const zwei = [karte('g', 'Teich', 'enum.rooms.garten'), karte('h', 'Herd', 'enum.rooms.kueche')];
+        expect(nachRaeumen(zwei, garten, 'de')).to.equal(undefined);
+        expect(ids(nachRaeumen(zwei, garten, 'en'))).to.deep.equal(['h', 'g']);
+    });
+
+    it('liefert nichts, wenn die Reihenfolge stimmt; Gleichstand entscheidet die ID', () => {
+        const gleich = [karte('b', 'Lampe'), karte('a', 'Lampe')];
+        const einmal = nachRaeumen(gleich, raeume, 'de');
+        expect((einmal as Zeile[]).map(k => k.id)).to.deep.equal(['a', 'b']);
+        expect(nachRaeumen(einmal, raeume, 'de')).to.equal(undefined);
+        expect(nachRaeumen(undefined, raeume, 'de')).to.equal(undefined);
+        expect(nachRaeumen([], raeume, 'de')).to.equal(undefined);
     });
 });
 
