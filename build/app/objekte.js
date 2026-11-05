@@ -115,6 +115,10 @@ function alsAppDaten(n) {
   const gueltig = istText(n.name) && istText(n.zugangHash) && /^[0-9a-f]{64}$/.test(n.zugangHash) && istText(n.profil) && typeof n.gekoppeltAm === "number" && istJaNein(h == null ? void 0 : h.akku) && istJaNein(h == null ? void 0 : h.anruf) && istJaNein(h == null ? void 0 : h.benachrichtigung) && istText(g == null ? void 0 : g.android) && istText(g == null ? void 0 : g.appVersion);
   return gueltig ? { ...n, handydaten: { akku: h.akku, anruf: h.anruf, benachrichtigung: h.benachrichtigung } } : void 0;
 }
+const ORDNERNAMEN = {
+  karten: { de: "Karten f\xFCr die Apps", en: "Cards for the apps" },
+  profile: { de: "Profile f\xFCr die Apps", en: "Profiles for the apps" }
+};
 class IoBrokerAblage {
   constructor(adapter) {
     this.adapter = adapter;
@@ -218,27 +222,27 @@ class IoBrokerAblage {
     await this.adapter.delObjectAsync(`apps.${appId}`);
     [...this.angelegt].filter((id) => id.startsWith(`apps.${appId}.`)).forEach((id) => this.angelegt.delete(id));
   }
-  // Frisch gelesen, damit nichts verloren geht, was inzwischen in den Einstellungen steht
-  async ergaenzeEinstellungen(karten, profile) {
-    var _a;
-    const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
-    const native = (_a = objekt == null ? void 0 : objekt.native) != null ? _a : {};
-    const bisher = (w) => Array.isArray(w) ? w : [];
-    await this.adapter.updateConfig({
-      karten: [...bisher(native.karten), ...karten],
-      profile: [...bisher(native.profile), ...profile]
-    });
+  async leereEinstellungen() {
+    await this.adapter.updateConfig({ karten: [], profile: [] });
   }
-  // Frisch gelesen: Geordnet wird, was gerade gespeichert ist. true, wenn sich die Reihenfolge geändert hat.
-  async ordneKarten(ordnung) {
+  async liesEintrag(ordner, id) {
     var _a;
-    const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
-    const karten = ordnung((_a = objekt == null ? void 0 : objekt.native) == null ? void 0 : _a.karten);
-    if (!karten) {
-      return false;
+    const objekt = await this.adapter.getObjectAsync(`${ordner}.${id}`);
+    return (objekt == null ? void 0 : objekt.type) === "config" ? (_a = objekt.native) != null ? _a : {} : void 0;
+  }
+  async schreibeEintrag(ordner, id, name, native) {
+    if (!this.angelegt.has(ordner)) {
+      await this.adapter.setObjectNotExistsAsync(ordner, {
+        type: "folder",
+        common: { name: ORDNERNAMEN[ordner] },
+        native: {}
+      });
+      this.angelegt.add(ordner);
     }
-    await this.adapter.updateConfig({ karten });
-    return true;
+    await this.adapter.setObjectAsync(`${ordner}.${id}`, { type: "config", common: { name }, native });
+  }
+  async loescheEintrag(ordner, id) {
+    await this.adapter.delObjectAsync(`${ordner}.${id}`);
   }
   async loescheObjekt(id) {
     await this.adapter.delObjectAsync(id);

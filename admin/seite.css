@@ -1,0 +1,522 @@
+/* Karten- und Profilseite. Hell und dunkel wie der Admin; der Hintergrund bleibt durchsichtig, damit der des Admins
+   durchscheint. */
+:root {
+    --text: #1f2328;
+    --leise: #5f6670;
+    --flaeche: rgba(0, 0, 0, 0.035);
+    --flaeche-hover: rgba(0, 0, 0, 0.07);
+    --rand: rgba(0, 0, 0, 0.14);
+    --haupt: #1976d2;
+    --haupt-text: #fff;
+    --warnung: #b26a00;
+    --fehler: #c62828;
+    --dialog: #fff;
+    --feld: #fff;
+    color-scheme: light;
+}
+
+:root[data-thema='dunkel'] {
+    --text: #e6e8eb;
+    --leise: #a3a9b1;
+    --flaeche: rgba(255, 255, 255, 0.05);
+    --flaeche-hover: rgba(255, 255, 255, 0.1);
+    --rand: rgba(255, 255, 255, 0.16);
+    --haupt: #64b5f6;
+    --haupt-text: #0d1b2a;
+    --warnung: #ffb74d;
+    --fehler: #ef7b7b;
+    --dialog: #1e2329;
+    --feld: #15191e;
+    color-scheme: dark;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    background: transparent;
+    color: var(--text);
+    font:
+        14px/1.45 Roboto,
+        'Segoe UI',
+        system-ui,
+        sans-serif;
+}
+
+body {
+    padding: 4px 4px 24px;
+}
+
+.kopf {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.hinweis {
+    flex: 1 1 320px;
+    margin: 0;
+    color: var(--leise);
+}
+
+.meldung {
+    margin: 8px 0 0;
+    color: var(--fehler);
+}
+
+.meldung:empty {
+    display: none;
+}
+
+.knopf {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 6px 14px;
+    border: 1px solid var(--rand);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.knopf:hover:not(:disabled) {
+    background: var(--flaeche-hover);
+}
+
+.knopf:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.knopf.haupt {
+    border-color: var(--haupt);
+    background: var(--haupt);
+    color: var(--haupt-text);
+}
+
+.knopf.haupt:hover:not(:disabled) {
+    background: var(--haupt);
+    filter: brightness(1.08);
+}
+
+.knopf.gefahr {
+    border-color: transparent;
+    color: var(--fehler);
+}
+
+.knopf.gefahr.voll {
+    border-color: var(--fehler);
+    background: var(--fehler);
+    color: #fff;
+}
+
+.knopf svg,
+.symbol svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+:focus-visible {
+    outline: 2px solid var(--haupt);
+    outline-offset: 2px;
+}
+
+.raum {
+    margin-top: 24px;
+}
+
+.raum h2 {
+    margin: 0 0 10px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.raum h2 .anzahl {
+    margin-left: 6px;
+    color: var(--leise);
+    font-weight: 400;
+}
+
+.kacheln.oben {
+    margin-top: 24px;
+}
+
+.kacheln {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px;
+}
+
+.kachel {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
+    gap: 4px 12px;
+    padding: 12px 8px 12px 14px;
+    border: 1px solid var(--rand);
+    border-radius: 10px;
+    background: var(--flaeche);
+    cursor: pointer;
+}
+
+.kachel:hover {
+    background: var(--flaeche-hover);
+}
+
+.kachel .symbol {
+    grid-row: span 2;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--flaeche-hover);
+    color: var(--haupt);
+}
+
+.kachel .name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.kachel .art {
+    grid-column: 2;
+    color: var(--leise);
+    font-size: 13px;
+}
+
+.kachel .mangel {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-size: 13px;
+}
+
+.kachel .mangel.fehlt {
+    color: var(--fehler);
+}
+
+.kachel .mangel.teilweise {
+    color: var(--warnung);
+}
+
+.kachel .bearbeiten {
+    grid-row: 1;
+    grid-column: 3;
+    min-height: 32px;
+    padding: 4px;
+    border-color: transparent;
+    color: var(--leise);
+}
+
+.symbol.klein {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--flaeche-hover);
+    color: var(--haupt);
+}
+
+.symbol.klein svg {
+    width: 16px;
+    height: 16px;
+}
+
+.leer {
+    margin-top: 32px;
+    color: var(--leise);
+    text-align: center;
+}
+
+dialog {
+    width: min(640px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px);
+    padding: 0;
+    border: 1px solid var(--rand);
+    border-radius: 12px;
+    background: var(--dialog);
+    color: var(--text);
+}
+
+dialog::backdrop {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+dialog form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 20px;
+}
+
+dialog h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.feld {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.zeile > .feld {
+    flex: 1 1 200px;
+}
+
+.feld > span {
+    color: var(--leise);
+    font-size: 13px;
+}
+
+.zeile {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+
+input,
+select {
+    width: 100%;
+    min-height: 38px;
+    padding: 7px 10px;
+    border: 1px solid var(--rand);
+    border-radius: 6px;
+    background: var(--feld);
+    color: var(--text);
+    font: inherit;
+}
+
+input[aria-invalid='true'] {
+    border-color: var(--fehler);
+}
+
+.teile {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin: 0;
+    padding: 12px 14px 14px;
+    border: 1px solid var(--rand);
+    border-radius: 8px;
+}
+
+.teile legend {
+    padding: 0 4px;
+    color: var(--leise);
+    font-size: 13px;
+}
+
+#teile {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.wahl {
+    position: relative;
+}
+
+.vorschlaege {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    z-index: 2;
+    max-height: 264px;
+    margin: 0;
+    padding: 4px;
+    overflow: auto;
+    border: 1px solid var(--rand);
+    border-radius: 8px;
+    background: var(--dialog);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    list-style: none;
+}
+
+.vorschlaege li {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 10px;
+    border-radius: 6px;
+}
+
+.vorschlaege li[data-i] {
+    cursor: pointer;
+}
+
+.vorschlaege li.aktiv,
+.vorschlaege li[data-i]:hover {
+    background: var(--flaeche-hover);
+}
+
+.vorschlaege .vid,
+.vorschlaege .vhinweis {
+    color: var(--leise);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.teil .info {
+    min-height: 1em;
+    color: var(--leise);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.teil .info.mangel {
+    color: var(--fehler);
+}
+
+.fuss {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.fuss .platz {
+    flex: 1;
+}
+
+.fuss.frage {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--flaeche-hover);
+}
+
+/* Die Frage steht über den Knöpfen, die Knöpfe rechts wie sonst */
+#loeschfrageText {
+    flex-basis: 100%;
+}
+
+/* Profilseite: je Raum und je Karte eine Wahl */
+.vorschau {
+    margin: 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--flaeche-hover);
+}
+
+.erklaerung {
+    margin: 0;
+    color: var(--leise);
+    font-size: 13px;
+}
+
+.wahlliste {
+    display: flex;
+    flex-direction: column;
+}
+
+.wahlliste .gruppe {
+    margin: 14px 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.wahlzeile {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--rand);
+}
+
+.wahlname {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.wahlname.mit-symbol {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+.wahlname > span:not(.symbol) {
+    display: flex;
+    flex-direction: column;
+}
+
+.leise {
+    color: var(--leise);
+    font-size: 12px;
+}
+
+.zustand[data-art='schreiben'] {
+    color: var(--haupt);
+}
+
+.stufen {
+    display: inline-flex;
+    flex: none;
+    border: 1px solid var(--rand);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.stufe {
+    position: relative;
+}
+
+.stufe + .stufe {
+    border-left: 1px solid var(--rand);
+}
+
+.stufe input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.stufe span {
+    display: block;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.stufe span:hover {
+    background: var(--flaeche-hover);
+}
+
+.stufe input:checked + span {
+    background: var(--haupt);
+    color: var(--haupt-text);
+}
+
+.stufe.gesperrt input:checked + span {
+    background: var(--fehler);
+    color: #fff;
+}
+
+.stufe input:focus-visible + span {
+    outline: 2px solid var(--haupt);
+    outline-offset: -2px;
+}
+
+[hidden] {
+    display: none !important;
+}

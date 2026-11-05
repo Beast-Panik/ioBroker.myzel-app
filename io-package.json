@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "news": {
+            "0.4.0": {
+                "en": "Own pages in the Cards and Profiles tabs: cards grouped by room as tiles with a gear to edit and a search for data points of the fitting type, checked on save with their problems per part; profiles as tiles showing what an app sees and which apps use them, a choice per room and per card with a live preview. Cards and profiles are objects under karten and profile and apply at once, without restarting the instance; the start moves them there from the instance settings",
+                "de": "Eigene Seiten in den Reitern Karten und Profile: Karten je Raum als Kacheln mit Zahnrad und Suche nach Datenpunkten des passenden Typs, beim Speichern geprüft mit Mängeln je Teil; Profile als Kacheln mit Sicht und Apps, je Raum und je Karte eine Wahl mit Vorschau. Karten und Profile sind Objekte unter karten und profile und wirken sofort, ohne Neustart der Instanz; der Start zieht sie aus den Instanzeinstellungen dorthin um"
+            },
             "0.3.0": {
                 "en": "Notifications in their own folder: per selected app a subfolder with app, package, title, text, time and JSON, plus latest for the newest of all apps. Protocol 4: the app reports its selection and the folders appear at once; deselected apps lose theirs. The old channel notification is removed on start",
                 "de": "Benachrichtigungen im eigenen Ordner: je gewählter App ein Unterordner mit App, Paket, Titel, Text, Zeit und JSON, dazu letzte für die neueste aller Apps. Protokoll 4: Die App meldet ihre Auswahl, die Ordner entstehen sofort; abgewählte Apps verlieren ihren. Der alte Kanal benachrichtigung wird beim Start entfernt"

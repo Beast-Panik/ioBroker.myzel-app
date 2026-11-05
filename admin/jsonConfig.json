@@ -21,204 +21,17 @@
             "type": "panel",
             "label": "Cards",
             "items": {
-                "_kartenHinweis": {
+                "_kartenAus": {
                     "type": "staticText",
-                    "text": "Cards hint",
+                    "text": "Cards page offline",
+                    "hidden": "_alive",
                     "xs": 12
                 },
-                "karten": {
-                    "type": "accordion",
-                    "titleAttr": "name",
-                    "noDelete": false,
-                    "clone": false,
+                "_kartenseite": {
+                    "type": "iframeSendTo",
+                    "command": "kartenseite",
                     "xs": 12,
-                    "items": [
-                        {
-                            "type": "text",
-                            "attr": "name",
-                            "label": "Name",
-                            "maxLength": 200,
-                            "validator": "!!data.name && data.name.trim() !== ''",
-                            "validatorErrorText": "Name is required",
-                            "validatorNoSaveOnError": true,
-                            "xs": 12,
-                            "md": 5
-                        },
-                        {
-                            "type": "select",
-                            "attr": "typ",
-                            "label": "Type",
-                            "default": "schalter",
-                            "options": [
-                                { "label": "Lamp", "value": "lampe" },
-                                { "label": "Switch", "value": "schalter" },
-                                { "label": "Measurement", "value": "messwert" },
-                                { "label": "Thermostat", "value": "thermostat" }
-                            ],
-                            "xs": 12,
-                            "sm": 6,
-                            "md": 3
-                        },
-                        {
-                            "type": "room",
-                            "attr": "raum",
-                            "label": "Room",
-                            "default": "",
-                            "xs": 12,
-                            "sm": 6,
-                            "md": 4
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "schalten",
-                            "label": "On (true or false)",
-                            "types": "state",
-                            "customFilter": { "common": { "type": "boolean" } },
-                            "hidden": "data.typ !== 'lampe' && data.typ !== 'schalter'",
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "helligkeit",
-                            "label": "Brightness (number)",
-                            "types": "state",
-                            "customFilter": { "common": { "type": "number" } },
-                            "hidden": "data.typ !== 'lampe'",
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "farbe",
-                            "label": "Colour RGB (text #RRGGBB)",
-                            "types": "state",
-                            "customFilter": { "common": { "type": "string" } },
-                            "hidden": "data.typ !== 'lampe'",
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "farbtemperatur",
-                            "label": "Colour temperature (number with min and max, K or mired)",
-                            "types": "state",
-                            "customFilter": { "common": { "type": "number" } },
-                            "hidden": "data.typ !== 'lampe'",
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "wert1",
-                            "label": "Value 1",
-                            "types": "state",
-                            "hidden": "data.typ !== 'messwert'",
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 8
-                        },
-                        {
-                            "type": "text",
-                            "attr": "bezeichnung1",
-                            "label": "Label 1",
-                            "help": "Label help",
-                            "maxLength": 60,
-                            "hidden": "data.typ !== 'messwert'",
-                            "xs": 12,
-                            "md": 4
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "wert2",
-                            "label": "Value 2",
-                            "types": "state",
-                            "hidden": "data.typ !== 'messwert'",
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 8
-                        },
-                        {
-                            "type": "text",
-                            "attr": "bezeichnung2",
-                            "label": "Label 2",
-                            "maxLength": 60,
-                            "hidden": "data.typ !== 'messwert'",
-                            "xs": 12,
-                            "md": 4
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "wert3",
-                            "label": "Value 3",
-                            "types": "state",
-                            "hidden": "data.typ !== 'messwert'",
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 8
-                        },
-                        {
-                            "type": "text",
-                            "attr": "bezeichnung3",
-                            "label": "Label 3",
-                            "maxLength": 60,
-                            "hidden": "data.typ !== 'messwert'",
-                            "xs": 12,
-                            "md": 4
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "wert4",
-                            "label": "Value 4",
-                            "types": "state",
-                            "hidden": "data.typ !== 'messwert'",
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 8
-                        },
-                        {
-                            "type": "text",
-                            "attr": "bezeichnung4",
-                            "label": "Label 4",
-                            "maxLength": 60,
-                            "hidden": "data.typ !== 'messwert'",
-                            "xs": 12,
-                            "md": 4
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "soll",
-                            "label": "Target temperature (number)",
-                            "types": "state",
-                            "customFilter": { "common": { "type": "number" } },
-                            "hidden": "data.typ !== 'thermostat'",
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "objectId",
-                            "attr": "ist",
-                            "label": "Current temperature (number)",
-                            "types": "state",
-                            "customFilter": { "common": { "type": "number" } },
-                            "hidden": "data.typ !== 'thermostat'",
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "text",
-                            "attr": "id",
-                            "label": "ID",
-                            "help": "ID help",
-                            "readOnly": true,
-                            "defaultFunc": "'k' + Date.now().toString(36)",
-                            "newLine": true,
-                            "xs": 12,
-                            "sm": 4
-                        }
-                    ]
+                    "style": { "height": "calc(100vh - 220px)", "minHeight": "420px" }
                 }
             }
         },
@@ -226,94 +39,17 @@
             "type": "panel",
             "label": "Profiles",
             "items": {
-                "_profileHinweis": {
+                "_profileAus": {
                     "type": "staticText",
-                    "text": "Profiles hint",
+                    "text": "Profiles page offline",
+                    "hidden": "_alive",
                     "xs": 12
                 },
-                "profile": {
-                    "type": "accordion",
-                    "titleAttr": "name",
-                    "noDelete": false,
-                    "clone": false,
+                "_profilseite": {
+                    "type": "iframeSendTo",
+                    "command": "profilseite",
                     "xs": 12,
-                    "items": [
-                        {
-                            "type": "text",
-                            "attr": "name",
-                            "label": "Name",
-                            "maxLength": 60,
-                            "validator": "!!data.name && data.name.trim() !== ''",
-                            "validatorErrorText": "Name is required",
-                            "validatorNoSaveOnError": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "selectSendTo",
-                            "attr": "raeumeSchreiben",
-                            "label": "Rooms to control",
-                            "command": "raeume",
-                            "multiple": true,
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "selectSendTo",
-                            "attr": "raeumeLesen",
-                            "label": "Rooms to view only",
-                            "command": "raeume",
-                            "multiple": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "selectSendTo",
-                            "attr": "kartenSchreiben",
-                            "label": "Single cards to control",
-                            "help": "Single cards help",
-                            "command": "karten",
-                            "jsonData": "{\"karten\": ${JSON.stringify(globalData.karten || [])}}",
-                            "multiple": true,
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "selectSendTo",
-                            "attr": "kartenLesen",
-                            "label": "Single cards to view only",
-                            "command": "karten",
-                            "jsonData": "{\"karten\": ${JSON.stringify(globalData.karten || [])}}",
-                            "multiple": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "selectSendTo",
-                            "attr": "gesperrt",
-                            "label": "Blocked cards",
-                            "help": "Blocked help",
-                            "command": "karten",
-                            "jsonData": "{\"karten\": ${JSON.stringify(globalData.karten || [])}}",
-                            "multiple": true,
-                            "newLine": true,
-                            "xs": 12,
-                            "md": 6
-                        },
-                        {
-                            "type": "text",
-                            "attr": "id",
-                            "label": "ID",
-                            "help": "ID help",
-                            "readOnly": true,
-                            "defaultFunc": "'p' + Date.now().toString(36)",
-                            "newLine": true,
-                            "xs": 12,
-                            "sm": 4
-                        }
-                    ]
+                    "style": { "height": "calc(100vh - 220px)", "minHeight": "420px" }
                 }
             }
         },

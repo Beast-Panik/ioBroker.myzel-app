@@ -29,6 +29,8 @@ K1: Karten statt Datenpunkte (KONZEPT-KARTEN.md). Die Aktion „Karten“ im Ger
 
 K3: Karten und Profile haben je einen eigenen Reiter in den Instanzeinstellungen: Apps, Karten, Profile, Einstellungen. Der Gerätemanager im Reiter Apps und damit der Reiter „Geräte“ des Admins zeigen nur noch Apps. Karten und Profile stehen in `native.karten` und `native.profile`; neue bekommen eine feste ID aus der Zeit. Die Auswahllisten im Profil zeigen Räume und Karten mit Namen. Speichern startet die Instanz neu, verbundene Apps sind wenige Sekunden getrennt. Beim Start meldet der Adapter unbrauchbare Zeilen und unpassende Datenpunkte im Log. Die Karten ordnet er nach Räumen wie in der App (0.2.1). Geräte, Karten- und Profilobjekte früherer Stände übernimmt der Start in die Einstellungen und löscht die Objekte.
 
+Karten- und Profilseite (0.4.0): Die Reiter Karten und Profile sind je eine eigene Seite. Karten stehen je Raum als Kacheln, ohne Raum zuletzt; das Zahnrad öffnet sie zum Bearbeiten, „Neue Karte“ legt eine an. Je Teil sucht ein Feld nur Datenpunkte des passenden Typs, nach ID und Name. Der Adapter prüft jede Karte beim Speichern und zeigt Mängel je Teil an der Kachel und im Dialog. Profile stehen als Kacheln mit dem, was eine App damit sieht, und den Apps, die sie haben; im Dialog je Raum Nein, Ansehen oder Bedienen, je Karte Wie Raum, Ansehen, Bedienen oder Gesperrt, mit einer Vorschau, die der Adapter bei jeder Wahl rechnet. Karten und Profile sind Objekte `karten.<id>` und `profile.<id>` und wirken sofort, ohne Neustart der Instanz: Verbundene Apps bekommen nach rund 2 s neue Rechte und bleiben verbunden. Die Seiten verbinden sich über die Bibliothek, die der Admin selbst ausliefert, und gehen nur bei laufender Instanz. Karten und Profile aus den Instanzeinstellungen zieht der Start in Objekte um und leert die Listen; ein brauchbares Objekt mit derselben ID gewinnt.
+
 ## Entwickeln
 
 ```
@@ -93,6 +95,10 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.4.0
+
+Eigene Seiten in den Reitern Karten und Profile statt der aufklappbaren Listen. Karten je Raum als Kacheln, Zahnrad zum Bearbeiten, ein Knopf „Neue Karte“, Datenpunktsuche je Teil nur mit passendem Typ, Prüfung beim Speichern mit Mängeln je Teil. Profile als Kacheln mit Sicht und Apps, im Dialog je Raum und je Karte eine Wahl, Vorschau bei jeder Wahl, Löschen mit Rückfrage, die die betroffenen Apps nennt. Karten und Profile liegen als Objekte unter `karten` und `profile` und wirken ohne Neustart der Instanz; der Start zieht sie aus den Instanzeinstellungen dorthin um. Die Auswahllisten `raeume` und `karten` des alten Profilreiters entfallen
 
 ### 0.3.0
 

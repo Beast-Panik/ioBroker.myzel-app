@@ -1,8 +1,10 @@
 import * as utils from '@iobroker/adapter-core';
 import gemeinsam from '../protokoll/v1/gemeinsam.schema.json';
 import { type Betrieb, Geraete, Verwaltung, adminOffen } from './admin/geraete';
+import type { Ablehnung } from './admin/eintraege';
+import { KARTENBEFEHLE, Kartenseite } from './admin/kartenseite';
+import { PROFILBEFEHLE, Profilseite } from './admin/profilseite';
 import { Katalog } from './app/katalog';
-import { type Option, kartenoptionen, liesKonfiguration, nachRaeumen, raumoptionen } from './app/konfiguration';
 import { IoBrokerAblage, IoBrokerQuelle } from './app/objekte';
 import { kartenmaengel } from './app/rechte';
 import { stelleUm } from './app/umstellung';
@@ -14,14 +16,13 @@ import { pruefeEinstellungen } from './einstellungen';
 import { automatischeAdressen } from './zugang/heimnetz';
 
 const IDENTITAET = 'identitaet';
-// Eine Instanz aus der Zeit vor Karten in den Einstellungen hat die Felder noch nicht
-const liste = (w: unknown): unknown[] => (Array.isArray(w) ? w : []);
 const pruefeAdapterId = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/adapterId` }, [gemeinsam]);
 
 class MyzelApp extends utils.Adapter {
     private server?: Server;
     private katalog?: Katalog;
     private betrieb?: Betrieb;
+    private seiten: [readonly string[], Kartenseite | Profilseite][] = [];
     private beendet = false;
 
     public constructor(options: Partial<utils.AdapterOptions> = {}) {
@@ -40,6 +41,16 @@ class MyzelApp extends utils.Adapter {
         // Vor dem Start, damit der Gerätemanager auch antwortet, wenn der Start scheitert. Nicht im Konstruktor:
         // Dort gibt es this.log noch nicht.
         new Geraete(this, new Verwaltung({ namespace: this.namespace, log: this.log, betrieb: () => this.betrieb }));
+        const seite = {
+            namespace: this.namespace,
+            katalog: () => this.katalog,
+            ablage: new IoBrokerAblage(this),
+            log: this.log,
+        };
+        this.seiten = [
+            [KARTENBEFEHLE, new Kartenseite(seite)],
+            [PROFILBEFEHLE, new Profilseite(seite)],
+        ];
         try {
             await this.starte();
         } catch (fehler) {
@@ -66,36 +77,19 @@ class MyzelApp extends utils.Adapter {
         const ablage = new IoBrokerAblage(this);
         const adressen = (): string[] =>
             this.config.adressen.length > 0 ? this.config.adressen : automatischeAdressen(this.config.port);
-        const neu = await stelleUm(this.namespace, quelle, this.config, ablage, this.log).catch((fehler: Error) => {
-            this.log.error(`Umstellung auf Karten in den Einstellungen: ${fehler.message}`);
-            return { karten: [], profile: [] };
-        });
-        const katalog = new Katalog(this.namespace, this.log, quelle);
-        katalog.konfiguriere(
-            liesKonfiguration(
-                {
-                    karten: [...liste(this.config.karten), ...neu.karten],
-                    profile: [...liste(this.config.profile), ...neu.profile],
-                },
-                this.log,
-            ),
+        await stelleUm(this.namespace, quelle, this.config, ablage, this.log).catch((fehler: Error) =>
+            this.log.error(`Umstellung auf Karten- und Profilobjekte: ${fehler.message}`),
         );
-        this.katalog = katalog;
+        const katalog = new Katalog(this.namespace, this.log, quelle);
         await this.subscribeForeignObjectsAsync('*');
         await katalog.lade();
-        this.log.info(`${katalog.anzahl} Datenpunkte im Katalog`);
+        this.katalog = katalog;
+        this.log.info(
+            `${katalog.anzahl} Datenpunkte, ${katalog.karten().length} Karten und ` +
+                `${katalog.alleProfile().length} Profile im Katalog`,
+        );
         for (const mangel of kartenmaengel(katalog)) {
             this.log.warn(mangel);
-        }
-        // Vor dem Server: Ändert sich die Reihenfolge, startet ioBroker die Instanz gleich noch einmal neu.
-        const geordnet = await ablage
-            .ordneKarten(karten => nachRaeumen(karten, katalog.raeume(), katalog.sprache))
-            .catch((fehler: Error) => {
-                this.log.warn(`Karten nicht nach Räumen geordnet: ${fehler.message}`);
-                return false;
-            });
-        if (geordnet) {
-            this.log.info('Karten in den Einstellungen nach Räumen geordnet');
         }
         const server = await starteServer({
             adapterId: identitaet.adapterId,
@@ -135,24 +129,20 @@ class MyzelApp extends utils.Adapter {
         }
     }
 
-    // Auswahllisten der Reiter Karten und Profile in den Instanzeinstellungen (admin/jsonConfig.json). Räume direkt aus
-    // ioBroker, damit die Listen auch gehen, wenn der Server nicht läuft.
+    // Die Seiten in den Reitern Karten und Profile (admin/jsonConfig.json)
     private async beantworte(obj: ioBroker.Message): Promise<void> {
-        if (!obj?.callback || (obj.command !== 'raeume' && obj.command !== 'karten')) {
+        const seite = this.seiten.find(([befehle]) => befehle.includes(obj?.command))?.[1];
+        if (!obj?.callback || !seite) {
             return;
         }
-        let antwort: Option[] = [];
+        let antwort: unknown;
         try {
-            const objekte = await this.getForeignObjectsAsync('enum.rooms.*', 'enum');
-            const raeume = Object.values(objekte).map(o => ({ id: o._id, name: o.common?.name, mitglieder: [] }));
-            antwort =
-                obj.command === 'raeume'
-                    ? raumoptionen(raeume)
-                    : kartenoptionen((obj.message as { karten?: unknown } | null)?.karten, raeume);
+            antwort = await seite.beantworte(obj.command, obj.message);
         } catch (fehler) {
-            this.log.warn(`Auswahl ${obj.command} für die Einstellungen: ${(fehler as Error).message}`);
+            this.log.warn(`${obj.command}: ${(fehler as Error).message}`);
+            antwort = { fehler: 'gescheitert', einzelheiten: [(fehler as Error).message] } satisfies Ablehnung;
         }
-        this.sendTo(obj.from, obj.command, antwort, obj.callback);
+        this.sendTo(obj.from, obj.command, antwort ?? null, obj.callback);
     }
 
     private async adminOhneAnmeldung(): Promise<string[]> {

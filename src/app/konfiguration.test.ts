@@ -1,20 +1,11 @@
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { KARTENBEFEHLE } from '../admin/kartenseite';
+import { PROFILBEFEHLE } from '../admin/profilseite';
 import type { Protokoll } from '../basis/grenzen';
-import {
-    type Zeile,
-    bezeichnungsfeld,
-    karteAusZeile,
-    kartenoptionen,
-    liesKonfiguration,
-    nachRaeumen,
-    profilAusZeile,
-    raumoptionen,
-    zeileAusKarte,
-    zeileAusProfil,
-} from './konfiguration';
-import { KARTENARTEN, KARTENTYPEN, type Karte, type Profil } from './rechte';
+import { bezeichnungsfeld, karteAusZeile, lies, profilAusZeile } from './konfiguration';
+import { KARTENARTEN } from './rechte';
 
 // Wie der Admin eine neue Zeile anlegt: jedes Feld der Seite, ohne Wert null
 const LEER = Object.fromEntries(
@@ -27,7 +18,7 @@ const LEER = Object.fromEntries(
     ].map(f => [f, null]),
 );
 
-describe('Karten und Profile aus den Instanzeinstellungen', () => {
+describe('Zeilen aus den Instanzeinstellungen bis 0.3.x', () => {
     let log: string[];
     const protokoll: Protokoll = {
         debug: () => undefined,
@@ -113,151 +104,61 @@ describe('Karten und Profile aus den Instanzeinstellungen', () => {
         expect(profilAusZeile({ name: '' })).to.be.an('array');
     });
 
-    it('Karten und Profile hin und zurück bleiben gleich', () => {
-        const karte: Karte = {
-            name: 'Klima',
-            typ: 'messwert',
-            raum: 'enum.rooms.bad',
-            teile: { wert1: 'a.t', wert2: 'a.f' },
-            bezeichnungen: { wert2: 'Feuchte' },
-        };
-        const profil: Profil = {
-            name: 'Gast',
-            raeume: [{ enum: 'enum.rooms.bad', recht: 'lesen' }],
-            karten: [{ id: 'klima', recht: 'schreiben' }],
-            gesperrt: ['tuer'],
-        };
-        expect(karteAusZeile(zeileAusKarte('klima', karte))).to.deep.equal(karte);
-        expect(profilAusZeile(zeileAusProfil('gast', profil))).to.deep.equal(profil);
-        expect(bezeichnungsfeld('wert4')).to.equal('bezeichnung4');
-    });
-
     it('liest alle Zeilen; ungültige oder doppelte IDs und kaputte Zeilen fallen mit Warnung weg', () => {
-        const k = liesKonfiguration(
-            {
-                karten: [
-                    { id: 'tuer', name: 'Tür', typ: 'schalter', raum: '', schalten: 'a.b' },
-                    { id: 'tuer', name: 'Zweite Tür', typ: 'schalter', raum: '', schalten: 'a.c' },
-                    { id: 'Gross', name: 'Groß', typ: 'schalter', raum: '', schalten: 'a.b' },
-                    { id: 'leer', name: 'Leer', typ: 'schalter', raum: '' },
-                    'kaputt',
-                    null,
-                ],
-                profile: [{ id: 'familie', name: 'Familie' }, { name: 'Ohne ID' }],
-            },
+        const karten = lies(
+            [
+                { id: 'tuer', name: 'Tür', typ: 'schalter', raum: '', schalten: 'a.b' },
+                { id: 'tuer', name: 'Zweite Tür', typ: 'schalter', raum: '', schalten: 'a.c' },
+                { id: 'Gross', name: 'Groß', typ: 'schalter', raum: '', schalten: 'a.b' },
+                { id: 'leer', name: 'Leer', typ: 'schalter', raum: '' },
+                'kaputt',
+                null,
+            ],
+            'Karte',
+            'wird nicht übernommen',
+            karteAusZeile,
             protokoll,
         );
-        expect([...k.karten.keys()]).to.deep.equal(['tuer']);
-        expect(k.karten.get('tuer')?.name).to.equal('Tür');
-        expect([...k.profile.keys()]).to.deep.equal(['familie']);
+        expect([...karten.keys()]).to.deep.equal(['tuer']);
+        expect(karten.get('tuer')?.name).to.equal('Tür');
+        const profile = lies(
+            [{ id: 'familie', name: 'Familie' }, { name: 'Ohne ID' }],
+            'Profil',
+            'wird nicht übernommen',
+            profilAusZeile,
+            protokoll,
+        );
+        expect([...profile.keys()]).to.deep.equal(['familie']);
         expect(log).to.have.length(4);
-        expect(log[0]).to.equal('Karte „Zweite Tür“ ist unbrauchbar und fehlt auf den Handys: ID tuer doppelt');
-        expect(log[3]).to.match(/^Profil „Ohne ID“ ist unbrauchbar und gibt keine Rechte/);
-        expect(liesKonfiguration({}, protokoll).karten.size).to.equal(0);
-    });
-
-    it('Auswahl für Profile: Räume und die Karten im Formular nach Namen, mit Typ und Raum je Sprache', () => {
-        const raeume = [
-            { id: 'enum.rooms.kueche', name: { de: 'Küche', en: 'Kitchen' }, mitglieder: [] },
-            { id: 'enum.rooms.bad', name: 'Bad', mitglieder: [] },
-        ];
-        expect(raumoptionen(raeume)).to.deep.equal([
-            { value: 'enum.rooms.bad', label: { en: 'Bad', de: 'Bad' } },
-            { value: 'enum.rooms.kueche', label: { en: 'Kitchen', de: 'Küche' } },
-        ]);
-        expect(
-            kartenoptionen(
-                [
-                    { id: 'tuer', name: 'Tür', typ: 'schalter', raum: '' },
-                    { id: 'herd', name: 'Herd', typ: 'schalter', raum: 'enum.rooms.kueche' },
-                    { id: 'neu', name: '', typ: 'lampe' },
-                    { id: 'Falsch', name: 'Falsch' },
-                ],
-                raeume,
-            ),
-        ).to.deep.equal([
-            { value: 'herd', label: { en: 'Herd (Switch, Kitchen)', de: 'Herd (Schalter, Küche)' } },
-            { value: 'tuer', label: { en: 'Tür (Switch, no room)', de: 'Tür (Schalter, ohne Raum)' } },
-        ]);
-        expect(kartenoptionen(undefined, raeume)).to.deep.equal([]);
-    });
-});
-
-describe('Reihenfolge der Karten in den Einstellungen', () => {
-    const raeume = [
-        { id: 'enum.rooms.wohnzimmer', name: { de: 'Wohnzimmer', en: 'Living room' }, mitglieder: [] },
-        { id: 'enum.rooms.kueche', name: { de: 'Küche', en: 'Kitchen' }, mitglieder: [] },
-        { id: 'enum.rooms.bad', name: 'Bad', mitglieder: [] },
-    ];
-    const karte = (id: string, name: string, raum = ''): Zeile => ({ id, name, typ: 'schalter', raum });
-
-    it('ordnet nach Raumnamen in der Systemsprache, ohne Raum zuletzt, im Raum nach Namen', () => {
-        const zeilen = [
-            karte('k1', 'Zeitschaltuhr', 'enum.rooms.wohnzimmer'),
-            karte('k2', 'Außen'),
-            karte('k3', 'Herd', 'enum.rooms.kueche'),
-            karte('k4', 'Lampe', 'enum.rooms.weg'),
-            karte('k5', 'Ärger', 'enum.rooms.wohnzimmer'),
-            'kaputt',
-            karte('k6', 'Lüfter', 'enum.rooms.bad'),
-        ];
-        const ids = (z: unknown[] | undefined): unknown[] =>
-            (z ?? []).map(k => (typeof k === 'string' ? k : (k as Zeile).id));
-        expect(ids(nachRaeumen(zeilen, raeume, 'de'))).to.deep.equal(['k6', 'k3', 'k5', 'k1', 'k2', 'k4', 'kaputt']);
-        expect(ids(nachRaeumen(zeilen, raeume, 'en'))).to.deep.equal(['k6', 'k3', 'k5', 'k1', 'k2', 'k4', 'kaputt']);
-        // Garten vor Küche, aber Kitchen vor Yard
-        const garten = [...raeume, { id: 'enum.rooms.garten', name: { de: 'Garten', en: 'Yard' }, mitglieder: [] }];
-        const zwei = [karte('g', 'Teich', 'enum.rooms.garten'), karte('h', 'Herd', 'enum.rooms.kueche')];
-        expect(nachRaeumen(zwei, garten, 'de')).to.equal(undefined);
-        expect(ids(nachRaeumen(zwei, garten, 'en'))).to.deep.equal(['h', 'g']);
-    });
-
-    it('liefert nichts, wenn die Reihenfolge stimmt; Gleichstand entscheidet die ID', () => {
-        const gleich = [karte('b', 'Lampe'), karte('a', 'Lampe')];
-        const einmal = nachRaeumen(gleich, raeume, 'de');
-        expect((einmal as Zeile[]).map(k => k.id)).to.deep.equal(['a', 'b']);
-        expect(nachRaeumen(einmal, raeume, 'de')).to.equal(undefined);
-        expect(nachRaeumen(undefined, raeume, 'de')).to.equal(undefined);
-        expect(nachRaeumen([], raeume, 'de')).to.equal(undefined);
+        // Mit der ganzen Zeile, die Umstellung leert die Liste danach
+        expect(log[0]).to.equal(
+            'Karte „Zweite Tür“ ist unbrauchbar und wird nicht übernommen: ID tuer doppelt. Zeile: ' +
+                '{"id":"tuer","name":"Zweite Tür","typ":"schalter","raum":"","schalten":"a.c"}',
+        );
+        expect(log[3]).to.match(
+            /^Profil „Ohne ID“ ist unbrauchbar und wird nicht übernommen: .*Zeile: \{"name":"Ohne ID"\}$/,
+        );
+        expect(lies(undefined, 'Profil', '', profilAusZeile, protokoll).size).to.equal(0);
+        expect(bezeichnungsfeld('wert4')).to.equal('bezeichnung4');
     });
 });
 
 describe('Einstellungsseite', () => {
     const seite = JSON.parse(readFileSync(join(__dirname, '../../admin/jsonConfig.json'), 'utf8'));
-    const felder = (reiter: string, liste: string): Record<string, any>[] =>
-        seite.items[reiter].items[liste].items as Record<string, any>[];
-    const sichtbar = (feld: Record<string, any>, data: Record<string, unknown>): boolean =>
-        !feld.hidden || !(new Function('data', `return ${feld.hidden}`)(data) as boolean);
 
-    it('zeigt je Kartentyp genau seine Teile als Datenpunktauswahl, beim Messwert dazu die Bezeichnungen', () => {
-        const karten = felder('_reiterKarten', 'karten');
-        const teile = karten.filter(f => f.type === 'objectId');
-        const bezeichnungen = karten.filter(f => /^bezeichnung\d$/.test(f.attr));
-        for (const typ of KARTENTYPEN) {
-            const art = KARTENARTEN[typ];
-            expect(
-                teile.filter(f => sichtbar(f, { typ })).map(f => f.attr),
-                typ,
-            ).to.deep.equal(Object.keys(art.teile));
-            expect(
-                bezeichnungen.filter(f => sichtbar(f, { typ })).map(f => f.attr),
-                typ,
-            ).to.deep.equal(art.bezeichnungen ? Object.keys(art.teile).map(bezeichnungsfeld) : []);
-        }
-        const typen = karten.find(f => f.attr === 'typ')?.options.map((o: { value: string }) => o.value);
-        expect(typen).to.deep.equal(KARTENTYPEN);
-    });
-
-    it('neue Karten und Profile bekommen eine eigene ID, die nicht änderbar ist', () => {
-        for (const [reiter, liste, praefix] of [
-            ['_reiterKarten', 'karten', 'k'],
-            ['_reiterProfile', 'profile', 'p'],
-        ]) {
-            const id = felder(reiter, liste).find(f => f.attr === 'id')!;
-            expect(id.readOnly).to.equal(true);
-
-            const neu = new Function(`return ${id.defaultFunc}`)() as string;
-            expect(neu).to.match(new RegExp(`^${praefix}[a-z0-9]+$`));
-        }
-    });
+    for (const [reiter, befehle] of [
+        ['_reiterKarten', KARTENBEFEHLE],
+        ['_reiterProfile', PROFILBEFEHLE],
+    ] as const) {
+        it(`${reiter} bettet seine Seite ein, nur bei laufender Instanz, sonst steht ein Hinweis da`, () => {
+            const items = Object.values(seite.items[reiter].items as Record<string, Record<string, any>>);
+            const eingebettet = items.filter(f => f.type === 'iframeSendTo');
+            expect(eingebettet).to.have.length(1);
+            expect(befehle).to.include(eingebettet[0].command);
+            expect(items.filter(f => f.type === 'accordion')).to.deep.equal([]);
+            const hinweis = items.find(f => f.type === 'staticText' && f.hidden)!;
+            expect(new Function('_alive', `return ${hinweis.hidden}`)(true)).to.equal(true);
+            expect(new Function('_alive', `return ${hinweis.hidden}`)(false)).to.equal(false);
+        });
+    }
 });

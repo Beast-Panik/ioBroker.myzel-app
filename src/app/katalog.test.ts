@@ -38,7 +38,7 @@ function umgebung(quelle: Katalogquelle = quelleAus([])): {
 }
 
 describe('Katalog', () => {
-    it('lädt Datenpunkte, Räume und Systemsprache mit drei Abfragen; Objekte für Karten und Profile zählen nicht', async () => {
+    it('lädt Datenpunkte, Räume, Karten, Profile und Systemsprache mit fünf Abfragen; Geräte zählen nicht', async () => {
         const abfragen: string[] = [];
         const { katalog } = umgebung(
             quelleAus(
@@ -60,7 +60,13 @@ describe('Katalog', () => {
             ),
         );
         await katalog.lade();
-        expect(abfragen).to.deep.equal(['config system.config', 'state ', 'enum enum.rooms.']);
+        expect(abfragen).to.deep.equal([
+            'config system.config',
+            'state ',
+            'enum enum.rooms.',
+            `config ${NAMESPACE}.karten.`,
+            `config ${NAMESPACE}.profile.`,
+        ]);
         expect(katalog.anzahl).to.equal(3);
         expect(katalog.datenpunkt('a.b-c.d')?.type).to.equal('number');
         expect(katalog.datenpunkt('a.b.kanal')).to.equal(undefined);
@@ -68,8 +74,8 @@ describe('Katalog', () => {
             { id: 'enum.rooms.bad', name: 'Bad', mitglieder: [] },
             { id: 'enum.rooms.kueche', name: 'Küche', mitglieder: ['a.b'] },
         ]);
-        expect(katalog.profil('familie')).to.equal(undefined);
-        expect(katalog.karten()).to.deep.equal([]);
+        expect(katalog.profil('familie')).to.deep.equal(profil);
+        expect(katalog.karten()).to.deep.equal([['lampe', lampe]]);
         expect(katalog.sprache).to.equal('fr');
     });
 
@@ -146,24 +152,14 @@ describe('Katalog', () => {
             objekt('enum.functions.licht', 'enum', { name: 'Licht', members: [] }),
             false,
         ],
-        [
-            'Kartenobjekt aus einem früheren Stand',
-            `${NAMESPACE}.karten.flur`,
-            objekt(`${NAMESPACE}.karten.flur`, 'config', {}, lampe),
-            false,
-        ],
+        ['Kartenobjekt', `${NAMESPACE}.karten.flur`, objekt(`${NAMESPACE}.karten.flur`, 'config', {}, lampe), true],
         [
             'Gerät aus Adapter 0.1',
             `${NAMESPACE}.geraete.flur`,
             objekt(`${NAMESPACE}.geraete.flur`, 'config', {}, lampe),
             false,
         ],
-        [
-            'Profilobjekt aus einem früheren Stand',
-            `${NAMESPACE}.profile.gast`,
-            objekt(`${NAMESPACE}.profile.gast`, 'config', {}, profil),
-            false,
-        ],
+        ['Profilobjekt', `${NAMESPACE}.profile.gast`, objekt(`${NAMESPACE}.profile.gast`, 'config', {}, profil), true],
         ['Objekt einer App', `${NAMESPACE}.apps.abcdefgh`, objekt(`${NAMESPACE}.apps.abcdefgh`, 'device'), true],
         ['gleiche Systemsprache', 'system.config', objekt('system.config', 'config', { language: 'en' }), false],
         ['leere Systemsprache wie Admin', 'system.config', objekt('system.config', 'config', { language: '' }), false],
@@ -226,24 +222,53 @@ describe('Katalog', () => {
         expect(katalog.raeume().find(r => r.id === 'enum.rooms.text')?.mitglieder).to.deep.equal(['a.b']);
     });
 
-    it('Karten und Profile aus den Einstellungen: nach ID sortiert, jede neue Einstellung gemeldet', () => {
-        const { katalog, meldungen } = umgebung();
-        katalog.konfiguriere({
-            karten: new Map([
-                ['flur', { ...lampe, name: 'Flur' }],
-                ['bad', lampe],
-            ]),
-            profile: new Map([['gast', profil]]),
-        });
-        expect(katalog.karten().map(([k, karte]) => [k, karte.name])).to.deep.equal([
+    it('Karten als Objekte: nach ID sortiert, jede Änderung gemeldet, Unbrauchbares fehlt mit Warnung', () => {
+        const { katalog, meldungen, warnungen } = umgebung();
+        const karte = (id: string, k: unknown, typ = 'config'): void =>
+            katalog.geaendert(
+                `${NAMESPACE}.karten.${id}`,
+                k === null ? null : objekt(`${NAMESPACE}.karten.${id}`, typ, {}, k),
+            );
+        karte('flur', { ...lampe, name: 'Flur' });
+        karte('bad', lampe);
+        expect(katalog.karten().map(([k, x]) => [k, x.name])).to.deep.equal([
             ['bad', 'Lampe'],
             ['flur', 'Flur'],
         ]);
-        expect(katalog.profil('gast')).to.deep.equal(profil);
-        expect(katalog.alleProfile().map(([id]) => id)).to.deep.equal(['gast']);
-        katalog.konfiguriere({ karten: new Map(), profile: new Map() });
+        expect(katalog.karte('flur')?.name).to.equal('Flur');
+        karte('flur', { ...lampe, name: '' });
+        expect(katalog.karten().map(([k]) => k)).to.deep.equal(['bad']);
+        expect(warnungen).to.have.length(1);
+        expect(warnungen[0]).to.match(/^Karte flur ist unbrauchbar und fehlt auf den Handys: /);
+        karte('bad', null);
+        karte('Gross', lampe);
+        karte('kanal', lampe, 'channel');
+        katalog.geaendert(
+            `${NAMESPACE}.karten.bad.unter`,
+            objekt(`${NAMESPACE}.karten.bad.unter`, 'config', {}, lampe),
+        );
         expect(katalog.karten()).to.deep.equal([]);
+        expect(meldungen()).to.equal(4);
+    });
+
+    it('Profile als Objekte: nach Namen sortiert, jede Änderung gemeldet, Unbrauchbares fehlt mit Warnung', () => {
+        const { katalog, meldungen, warnungen } = umgebung();
+        const setze = (id: string, p: unknown): void =>
+            katalog.geaendert(
+                `${NAMESPACE}.profile.${id}`,
+                p === null ? null : objekt(`${NAMESPACE}.profile.${id}`, 'config', {}, p),
+            );
+        setze('gast', { ...profil, name: 'Gast' });
+        setze('familie', profil);
+        setze('zweite', { ...profil, name: 'Familie' });
+        expect(katalog.alleProfile().map(([id]) => id)).to.deep.equal(['familie', 'zweite', 'gast']);
+        expect(katalog.profil('gast')?.name).to.equal('Gast');
+        setze('gast', { name: 'Gast', raeume: [] });
         expect(katalog.profil('gast')).to.equal(undefined);
-        expect(meldungen()).to.equal(2);
+        expect(warnungen).to.have.length(1);
+        expect(warnungen[0]).to.match(/^Profil gast ist unbrauchbar und gibt keine Rechte: /);
+        setze('zweite', null);
+        expect(katalog.alleProfile().map(([id]) => id)).to.deep.equal(['familie']);
+        expect(meldungen()).to.equal(5);
     });
 });

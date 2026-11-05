@@ -13,7 +13,7 @@ import {
 import type { Dienst } from '../app/dienst';
 import type { Katalog } from '../app/katalog';
 import type { AppDaten, Appablage, Handydaten } from '../app/objekte';
-import { type Profil, berechneRechte } from '../app/rechte';
+import { type Profil, sicht } from '../app/rechte';
 import { GRENZEN, type Protokoll } from '../basis/grenzen';
 import { type Kopplung, type Kopplungsanfrage, qrInhalt } from '../basis/kopplung';
 
@@ -283,11 +283,8 @@ export class Verwaltung {
     }
 
     private zaehle(b: Betrieb, profil: Profil): { n: number; m: number } {
-        const karten = berechneRechte(profil, b.katalog).inhalt.karten;
-        return {
-            n: karten.length,
-            m: karten.filter(k => Object.values(k.teile).some(t => t.recht === 'schreiben')).length,
-        };
+        const rechte = Object.values(sicht(profil, b.katalog));
+        return { n: rechte.length, m: rechte.filter(r => r === 'schreiben').length };
     }
 
     private profilauswahl(b: Betrieb): ConfigItemAny {

@@ -33,16 +33,20 @@ __export(rechte_exports, {
   KARTENTYPEN: () => KARTENTYPEN,
   KARTEN_HOECHSTENS: () => KARTEN_HOECHSTENS,
   NAME_LAENGE: () => NAME_LAENGE,
+  PROFILNAME_LAENGE: () => PROFILNAME_LAENGE,
   Rechtestand: () => Rechtestand,
   alsKarte: () => alsKarte,
   alsProfil: () => alsProfil,
   berechneRechte: () => berechneRechte,
   bereich: () => bereich,
   istKennung: () => istKennung,
+  istPersoenlich: () => istPersoenlich,
   kartenmaengel: () => kartenmaengel,
   liegtUnter: () => liegtUnter,
+  maengelDerKarte: () => maengelDerKarte,
   merkmale: () => merkmale,
   rechteFuer: () => rechteFuer,
+  sicht: () => sicht,
   text: () => text
 });
 module.exports = __toCommonJS(rechte_exports);
@@ -79,6 +83,7 @@ const KARTENTYPEN = Object.keys(KARTENARTEN);
 const KARTEN_HOECHSTENS = import_adapter_an_app_schema.default.$defs.rechteInhalt.properties.karten.maxItems;
 const NAME_LAENGE = 200;
 const BEZEICHNUNG_LAENGE = 60;
+const PROFILNAME_LAENGE = 60;
 const MERKMALE = ["name", "type", "unit", "min", "max", "step", "states", "write"];
 function aliasziele(alias) {
   const id = alias == null ? void 0 : alias.id;
@@ -103,7 +108,7 @@ const pruefeProfil = (0, import_schema.erstellePruefer)(
     type: "object",
     required: ["name", "raeume", "karten", "gesperrt"],
     properties: {
-      name: { type: "string", minLength: 1, maxLength: 60 },
+      name: { type: "string", minLength: 1, maxLength: PROFILNAME_LAENGE },
       raeume: {
         type: "array",
         items: {
@@ -237,39 +242,59 @@ const betrifft = (id, m, praefixe) => {
 };
 function teilmangel(dp, m, art) {
   if (pruefeObjektId(dp).length > 0) {
-    return "ID ung\xFCltig";
+    return { art: "id" };
   }
   if (!m) {
-    return "Datenpunkt fehlt";
+    return { art: "fehlt" };
   }
   if (betrifft(dp, m, FEST_GESPERRT)) {
-    return "unter system, nie freigegeben";
+    return { art: "system" };
   }
   if (!art.typen.includes(m.type)) {
-    return `Typ ${String(m.type)} statt ${art.typen.join(" oder ")}`;
+    return { art: "typ", ist: String(m.type), erwartet: art.typen };
   }
   if (art.bereich && bereich(art, m) === void 0) {
-    return "min und max fehlen oder passen nicht";
+    return { art: "bereich" };
   }
   return void 0;
+}
+function mangeltext(m) {
+  switch (m.art) {
+    case "id":
+      return "ID ung\xFCltig";
+    case "fehlt":
+      return "Datenpunkt fehlt";
+    case "system":
+      return "unter system, nie freigegeben";
+    case "typ":
+      return `Typ ${m.ist} statt ${m.erwartet.join(" oder ")}`;
+    case "bereich":
+      return "min und max fehlen oder passen nicht";
+  }
+}
+function maengelDerKarte(karte, datenpunkt) {
+  const art = KARTENARTEN[karte.typ];
+  const teile = {};
+  for (const [teil, dp] of Object.entries(karte.teile)) {
+    const mangel = teilmangel(dp, datenpunkt(dp), art.teile[teil]);
+    if (mangel) {
+      teile[teil] = mangel;
+    }
+  }
+  const bleiben = Object.keys(karte.teile).filter((teil) => !teile[teil]);
+  const folge = bleiben.length === 0 || art.pflicht.some((p) => !bleiben.includes(p)) ? "fehlt" : bleiben.length < Object.keys(karte.teile).length ? "teilweise" : void 0;
+  return { teile, ...folge ? { folge } : {} };
 }
 function kartenmaengel(quelle) {
   const maengel = [];
   for (const [id, karte] of quelle.karten()) {
-    const art = KARTENARTEN[karte.typ];
-    const teile = Object.entries(karte.teile).map(([teil, dp]) => ({
-      teil,
-      dp,
-      mangel: teilmangel(dp, quelle.datenpunkt(dp), art.teile[teil])
-    }));
-    const schlecht = teile.filter((t) => t.mangel !== void 0);
-    if (schlecht.length === 0) {
+    const { teile, folge } = maengelDerKarte(karte, (dp) => quelle.datenpunkt(dp));
+    if (!folge) {
       continue;
     }
-    const bleiben = teile.filter((t) => t.mangel === void 0).map((t) => t.teil);
-    const folge = bleiben.length === 0 || art.pflicht.some((p) => !bleiben.includes(p)) ? "fehlt auf den Handys" : "zeigt nicht alle Teile";
-    const liste = schlecht.map((t) => `${t.teil} ${t.dp}: ${t.mangel}`).join("; ");
-    maengel.push(`Karte \u201E${karte.name}\u201C (${id}) ${folge}: ${liste}`);
+    const liste = Object.entries(teile).map(([teil, m]) => `${teil} ${karte.teile[teil]}: ${mangeltext(m)}`).join("; ");
+    const satz = folge === "fehlt" ? "fehlt auf den Handys" : "zeigt nicht alle Teile";
+    maengel.push(`Karte \u201E${karte.name}\u201C (${id}) ${satz}: ${liste}`);
   }
   return maengel;
 }
@@ -293,6 +318,15 @@ class Rechtestand {
     return new Rechtestand({ profil: "", raeume: [], karten: [] });
   }
 }
+const istPersoenlich = (karte, quelle) => Object.values(karte.teile).some((dp) => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]));
+function sicht(profil, quelle) {
+  return Object.fromEntries(
+    berechneRechte(profil, quelle).inhalt.karten.map((k) => [
+      k.id,
+      Object.values(k.teile).some((t) => t.recht === "schreiben") ? "schreiben" : "lesen"
+    ])
+  );
+}
 function rechteFuer(profilId, quelle) {
   const profil = istKennung(profilId) ? quelle.profil(profilId) : void 0;
   return profil ? berechneRechte(profil, quelle) : Rechtestand.leer();
@@ -314,10 +348,7 @@ function berechneRechte(profil, quelle) {
       continue;
     }
     const raum = raeume.has(karte.raum) ? karte.raum : void 0;
-    const persoenlich = Object.values(karte.teile).some(
-      (dp) => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps])
-    );
-    const recht = (_a = einzeln.get(id)) != null ? _a : raum && !persoenlich ? raumrecht.get(raum) : void 0;
+    const recht = (_a = einzeln.get(id)) != null ? _a : raum && !istPersoenlich(karte, quelle) ? raumrecht.get(raum) : void 0;
     const eintrag = recht && kartenEintrag(id, karte, recht, raum, quelle);
     if (eintrag) {
       karten.push(eintrag);
@@ -356,16 +387,20 @@ function kartenEintrag(id, karte, recht, raum, quelle) {
   KARTENTYPEN,
   KARTEN_HOECHSTENS,
   NAME_LAENGE,
+  PROFILNAME_LAENGE,
   Rechtestand,
   alsKarte,
   alsProfil,
   berechneRechte,
   bereich,
   istKennung,
+  istPersoenlich,
   kartenmaengel,
   liegtUnter,
+  maengelDerKarte,
   merkmale,
   rechteFuer,
+  sicht,
   text
 });
 //# sourceMappingURL=rechte.js.map

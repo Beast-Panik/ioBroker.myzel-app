@@ -324,11 +324,9 @@ describe('Mängel der Karten für das Log', () => {
             .karte('teils', lampe({ schalten: 'z.0.l.an', farbtemperatur: 'z.0.l.ct_ohne' }))
             .karte('kaputt', { name: 'Kaputt', typ: 'schalter', raum: '', teile: { schalten: 'z.0.l.hell' } })
             .karte('weg', { name: 'Weg', typ: 'thermostat', raum: '', teile: { soll: 'h.0.weg', ist: 'z.0.s.temp' } })
-            .karte('sys', { name: 'Sys', typ: 'messwert', raum: '', teile: { wert1: 'system.adapter.admin.0.alive' } })
-            .karte('stern', { name: 'Stern', typ: 'schalter', raum: '', teile: { schalten: 'z.0.l.kaputt*' } });
+            .karte('sys', { name: 'Sys', typ: 'messwert', raum: '', teile: { wert1: 'system.adapter.admin.0.alive' } });
         expect(kartenmaengel(q.katalog)).to.deep.equal([
             'Karte „Kaputt“ (kaputt) fehlt auf den Handys: schalten z.0.l.hell: Typ number statt boolean',
-            'Karte „Stern“ (stern) fehlt auf den Handys: schalten z.0.l.kaputt*: ID ungültig',
             'Karte „Sys“ (sys) fehlt auf den Handys: wert1 system.adapter.admin.0.alive: unter system, nie freigegeben',
             'Karte „Lampe“ (teils) zeigt nicht alle Teile: farbtemperatur z.0.l.ct_ohne: min und max fehlen oder passen nicht',
             'Karte „Weg“ (weg) fehlt auf den Handys: soll h.0.weg: Datenpunkt fehlt',

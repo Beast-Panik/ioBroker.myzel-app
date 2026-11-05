@@ -24,6 +24,10 @@ module.exports = __toCommonJS(katalog_exports);
 var import_objekte = require("./objekte");
 var import_rechte = require("./rechte");
 const SPRACHE = "en";
+const EINTRAEGE = {
+  karten: { pruefe: import_rechte.alsKarte, unbrauchbar: (id) => `Karte ${id} ist unbrauchbar und fehlt auf den Handys` },
+  profile: { pruefe: import_rechte.alsProfil, unbrauchbar: (id) => `Profil ${id} ist unbrauchbar und gibt keine Rechte` }
+};
 class Katalog {
   constructor(namespace, log, quelle) {
     this.namespace = namespace;
@@ -36,8 +40,9 @@ class Katalog {
   datenpunkte = /* @__PURE__ */ new Map();
   raeumeNachId = /* @__PURE__ */ new Map();
   raeumeSortiert;
-  profile = /* @__PURE__ */ new Map();
-  kartenSortiert = [];
+  eintraege = { karten: /* @__PURE__ */ new Map(), profile: /* @__PURE__ */ new Map() };
+  kartenSortiert;
+  profileSortiert;
   puffer;
   laden = Promise.resolve();
   hoerer = () => void 0;
@@ -53,7 +58,9 @@ class Katalog {
       const listen = await Promise.all([
         this.quelle.objekte("config", "system.config"),
         this.quelle.objekte("state", ""),
-        this.quelle.objekte("enum", "enum.rooms.")
+        this.quelle.objekte("enum", "enum.rooms."),
+        this.quelle.objekte("config", `${this.namespace}.karten.`),
+        this.quelle.objekte("config", `${this.namespace}.profile.`)
       ]);
       for (const objekt of listen.flat()) {
         this.uebernimmSicher(objekt._id, objekt);
@@ -64,12 +71,6 @@ class Katalog {
     } finally {
       this.puffer = void 0;
     }
-  }
-  // Einmal beim Start; die Tests ändern damit Karten und Profile wie ein Neustart mit neuen Einstellungen.
-  konfiguriere(konfiguration) {
-    this.profile = new Map(konfiguration.profile);
-    this.kartenSortiert = [...konfiguration.karten].sort(([a], [b]) => a.localeCompare(b));
-    this.hoerer();
   }
   beiAenderung(hoerer) {
     this.hoerer = hoerer;
@@ -87,14 +88,23 @@ class Katalog {
     return this.datenpunkte.size;
   }
   profil(profilId) {
-    return this.profile.get(profilId);
+    return this.eintraege.profile.get(profilId);
   }
   // Nur brauchbare Profile, nach Namen sortiert
   alleProfile() {
-    return [...this.profile].sort(([, a], [, b]) => a.name.localeCompare(b.name));
+    var _a;
+    (_a = this.profileSortiert) != null ? _a : this.profileSortiert = [...this.eintraege.profile].sort(
+      ([a, x], [b, y]) => x.name.localeCompare(y.name) || a.localeCompare(b)
+    );
+    return this.profileSortiert;
   }
   karten() {
+    var _a;
+    (_a = this.kartenSortiert) != null ? _a : this.kartenSortiert = [...this.eintraege.karten].sort(([a], [b]) => a.localeCompare(b));
     return this.kartenSortiert;
+  }
+  karte(kartenId) {
+    return this.eintraege.karten.get(kartenId);
   }
   raeume() {
     var _a;
@@ -103,6 +113,9 @@ class Katalog {
   }
   datenpunkt(id) {
     return this.datenpunkte.get(id);
+  }
+  alleDatenpunkte() {
+    return this.datenpunkte.entries();
   }
   // Objekte schreiben auch andere Adapter und Skripte: Ein kaputtes darf weder das Laden noch objectChange abbrechen.
   uebernimmSicher(id, objekt) {
@@ -135,6 +148,12 @@ class Katalog {
     if ((0, import_objekte.appIdAus)(this.namespace, id)) {
       return true;
     }
+    for (const ordner of ["karten", "profile"]) {
+      const praefix = `${this.namespace}.${ordner}.`;
+      if (id.startsWith(praefix)) {
+        return this.uebernimmEintrag(ordner, id.slice(praefix.length), objekt);
+      }
+    }
     if (id.startsWith("enum.rooms.")) {
       this.raeumeSortiert = void 0;
       if ((objekt == null ? void 0 : objekt.type) !== "enum") {
@@ -150,6 +169,25 @@ class Katalog {
       return true;
     }
     return this.datenpunkte.delete(id);
+  }
+  // Ein unbrauchbarer Eintrag fehlt, bis er wieder passt; was darunter liegt, etwa ein Datenpunkt, ist keiner.
+  uebernimmEintrag(ordner, id, objekt) {
+    if (!(0, import_rechte.istKennung)(id)) {
+      return false;
+    }
+    this.kartenSortiert = void 0;
+    this.profileSortiert = void 0;
+    const eintraege = this.eintraege[ordner];
+    if ((objekt == null ? void 0 : objekt.type) !== "config") {
+      return eintraege.delete(id);
+    }
+    const eintrag = EINTRAEGE[ordner].pruefe(objekt.native);
+    if (Array.isArray(eintrag)) {
+      this.log.warn(`${EINTRAEGE[ordner].unbrauchbar(id)}: ${eintrag.join("; ")}`);
+      return eintraege.delete(id);
+    }
+    eintraege.set(id, structuredClone(eintrag));
+    return true;
   }
 }
 // Annotate the CommonJS export names for ESM import in node:

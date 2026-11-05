@@ -2,7 +2,6 @@ import gemeinsam from '../../protokoll/v1/gemeinsam.schema.json';
 import type { Geraet } from '../basis/anmeldung';
 import { erstellePruefer } from '../basis/schema';
 import type { Katalogquelle } from './katalog';
-import type { Zeile } from './konfiguration';
 import type { Umstellungsablage } from './umstellung';
 import type { Wert, Zustandsquelle } from './werte';
 
@@ -192,7 +191,24 @@ function alsAppDaten(n: Record<string, any>): AppDaten | undefined {
         : undefined;
 }
 
-// Apps als eigene Objekte, nicht in den Instanzeinstellungen: Änderungen daran starten die Instanz nicht neu.
+// Karten und Profile liegen als Objekte <ordner>.<id> vom Typ config, native ist die Karte oder das Profil.
+export type Ordner = 'karten' | 'profile';
+const ORDNERNAMEN: Record<Ordner, ioBroker.StringOrTranslated> = {
+    karten: { de: 'Karten für die Apps', en: 'Cards for the apps' },
+    profile: { de: 'Profile für die Apps', en: 'Profiles for the apps' },
+};
+
+// Eigene Schnittstelle, damit Seiten und Umstellung ohne ioBroker testbar sind.
+export interface Eintragsablage {
+    // native des Objekts; undefined, wenn dort kein config-Objekt liegt
+    liesEintrag(ordner: Ordner, id: string): Promise<Record<string, unknown> | undefined>;
+    // Ersetzt das Objekt ganz, damit nichts Altes stehen bleibt; fehlt es, entsteht es samt Ordner.
+    schreibeEintrag(ordner: Ordner, id: string, name: string, native: object): Promise<void>;
+    loescheEintrag(ordner: Ordner, id: string): Promise<void>;
+}
+
+// Apps, Karten und Profile als eigene Objekte, nicht in den Instanzeinstellungen: Änderungen daran starten die Instanz
+// nicht neu.
 export class IoBrokerAblage implements Appablage, Umstellungsablage {
     private readonly angelegt = new Set<string>();
 
@@ -315,26 +331,29 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
         [...this.angelegt].filter(id => id.startsWith(`apps.${appId}.`)).forEach(id => this.angelegt.delete(id));
     }
 
-    // Frisch gelesen, damit nichts verloren geht, was inzwischen in den Einstellungen steht
-    public async ergaenzeEinstellungen(karten: Zeile[], profile: Zeile[]): Promise<void> {
-        const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
-        const native = (objekt?.native ?? {}) as { karten?: unknown; profile?: unknown };
-        const bisher = (w: unknown): unknown[] => (Array.isArray(w) ? w : []);
-        await this.adapter.updateConfig({
-            karten: [...bisher(native.karten), ...karten],
-            profile: [...bisher(native.profile), ...profile],
-        });
+    public async leereEinstellungen(): Promise<void> {
+        await this.adapter.updateConfig({ karten: [], profile: [] });
     }
 
-    // Frisch gelesen: Geordnet wird, was gerade gespeichert ist. true, wenn sich die Reihenfolge geändert hat.
-    public async ordneKarten(ordnung: (karten: unknown) => unknown[] | undefined): Promise<boolean> {
-        const objekt = await this.adapter.getForeignObjectAsync(`system.adapter.${this.adapter.namespace}`);
-        const karten = ordnung((objekt?.native as { karten?: unknown } | undefined)?.karten);
-        if (!karten) {
-            return false;
+    public async liesEintrag(ordner: Ordner, id: string): Promise<Record<string, unknown> | undefined> {
+        const objekt = await this.adapter.getObjectAsync(`${ordner}.${id}`);
+        return objekt?.type === 'config' ? ((objekt.native ?? {}) as Record<string, unknown>) : undefined;
+    }
+
+    public async schreibeEintrag(ordner: Ordner, id: string, name: string, native: object): Promise<void> {
+        if (!this.angelegt.has(ordner)) {
+            await this.adapter.setObjectNotExistsAsync(ordner, {
+                type: 'folder',
+                common: { name: ORDNERNAMEN[ordner] },
+                native: {},
+            });
+            this.angelegt.add(ordner);
         }
-        await this.adapter.updateConfig({ karten });
-        return true;
+        await this.adapter.setObjectAsync(`${ordner}.${id}`, { type: 'config', common: { name }, native });
+    }
+
+    public async loescheEintrag(ordner: Ordner, id: string): Promise<void> {
+        await this.adapter.delObjectAsync(`${ordner}.${id}`);
     }
 
     public async loescheObjekt(id: string): Promise<void> {

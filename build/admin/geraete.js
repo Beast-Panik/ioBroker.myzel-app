@@ -253,11 +253,8 @@ class Verwaltung {
     };
   }
   zaehle(b, profil) {
-    const karten = (0, import_rechte.berechneRechte)(profil, b.katalog).inhalt.karten;
-    return {
-      n: karten.length,
-      m: karten.filter((k) => Object.values(k.teile).some((t) => t.recht === "schreiben")).length
-    };
+    const rechte = Object.values((0, import_rechte.sicht)(profil, b.katalog));
+    return { n: rechte.length, m: rechte.filter((r) => r === "schreiben").length };
   }
   profilauswahl(b) {
     const profile = b.katalog.alleProfile().map(([id, p]) => {

@@ -24,45 +24,49 @@ module.exports = __toCommonJS(umstellung_exports);
 var import_konfiguration = require("./konfiguration");
 var import_rechte = require("./rechte");
 const LAMPENTEILE = Object.keys(import_rechte.KARTENARTEN.lampe.teile);
+const BRAUCHBAR = {
+  karten: (native) => !Array.isArray((0, import_rechte.alsKarte)(native)),
+  profile: (native) => !Array.isArray((0, import_rechte.alsProfil)(native))
+};
 async function stelleUm(namespace, quelle, einstellungen, ablage, log) {
-  const ids = (zeilen) => new Set(
-    Array.isArray(zeilen) ? zeilen.map((z) => z == null ? void 0 : z.id).filter((id) => typeof id === "string") : []
-  );
-  const stand = {
-    karten: [],
-    profile: [],
-    loeschen: [],
-    ids: { karten: ids(einstellungen.karten), profile: ids(einstellungen.profile) }
-  };
-  await geraeteZuKarten(namespace, quelle, stand, log);
-  await kartenobjekte(namespace, quelle, stand, log);
-  await profilobjekte(namespace, quelle, stand, log);
-  if (stand.karten.length + stand.profile.length > 0) {
-    await ablage.ergaenzeEinstellungen(stand.karten, stand.profile);
-    log.info(
-      `${stand.karten.length} Karten und ${stand.profile.length} Profile in die Instanzeinstellungen \xFCbernommen`
-    );
+  const loeschen = [];
+  let karten = 0;
+  let profile = 0;
+  for (const [id, karte] of (0, import_konfiguration.lies)(einstellungen.karten, "Karte", "wird nicht \xFCbernommen", import_konfiguration.karteAusZeile, log)) {
+    karten += Number(await legeAn(ablage, "karten", id, karte));
   }
-  for (const id of stand.loeschen) {
+  karten += await geraeteZuKarten(namespace, quelle, ablage, loeschen, log);
+  for (const [id, profil] of (0, import_konfiguration.lies)(einstellungen.profile, "Profil", "wird nicht \xFCbernommen", import_konfiguration.profilAusZeile, log)) {
+    profile += Number(await legeAn(ablage, "profile", id, profil));
+  }
+  profile += await bereinigeProfilobjekte(namespace, quelle, ablage, log);
+  const voll = (liste) => Array.isArray(liste) && liste.length > 0;
+  if (voll(einstellungen.karten) || voll(einstellungen.profile)) {
+    await ablage.leereEinstellungen();
+  }
+  if (karten + profile > 0) {
+    log.info(`${karten} Karten und ${profile} Profile als Objekte \xFCbernommen`);
+  }
+  for (const id of loeschen) {
     await ablage.loescheObjekt(id);
   }
-  return { karten: stand.karten, profile: stand.profile };
 }
-function uebernimm(stand, liste, id, zeile) {
-  if (stand.ids[liste].has(id)) {
+async function legeAn(ablage, ordner, id, eintrag) {
+  const da = await ablage.liesEintrag(ordner, id);
+  if (da !== void 0 && BRAUCHBAR[ordner](da)) {
     return false;
   }
-  stand.ids[liste].add(id);
-  stand[liste].push(zeile);
+  await ablage.schreibeEintrag(ordner, id, eintrag.name, eintrag);
   return true;
 }
-async function geraeteZuKarten(namespace, quelle, stand, log) {
+async function geraeteZuKarten(namespace, quelle, ablage, loeschen, log) {
   var _a;
   const praefix = `${namespace}.geraete.`;
   const geraete = await quelle.objekte("config", praefix);
   if (geraete.length === 0) {
-    return;
+    return 0;
   }
+  let angelegt = 0;
   const raeume = (await quelle.objekte("enum", "enum.rooms.")).sort((a, b) => a._id.localeCompare(b._id));
   for (const objekt of geraete) {
     const id = objekt._id.slice(praefix.length);
@@ -82,51 +86,44 @@ async function geraeteZuKarten(namespace, quelle, stand, log) {
       log.warn(`Ger\xE4t ${id} bleibt stehen, es l\xE4sst sich nicht in eine Karte umwandeln`);
       continue;
     }
-    if (uebernimm(stand, "karten", id, (0, import_konfiguration.zeileAusKarte)(id, karte))) {
+    if (await legeAn(ablage, "karten", id, karte)) {
+      angelegt++;
       log.info(`Ger\xE4t ${id} ist jetzt eine Lampenkarte`);
     } else {
       log.warn(`Ger\xE4t ${id} entfernt, eine Karte mit dieser ID gibt es schon`);
     }
-    stand.loeschen.push(`geraete.${id}`);
+    loeschen.push(`geraete.${id}`);
   }
+  return angelegt;
 }
 function mitglieder(raum) {
   var _a;
   const members = (_a = raum.common) == null ? void 0 : _a.members;
   return Array.isArray(members) ? members.filter((m) => typeof m === "string") : [];
 }
-async function kartenobjekte(namespace, quelle, stand, log) {
-  const praefix = `${namespace}.karten.`;
-  for (const objekt of await quelle.objekte("config", praefix)) {
-    const id = objekt._id.slice(praefix.length);
-    const karte = (0, import_rechte.alsKarte)(objekt.native);
-    if (!(0, import_rechte.istKennung)(id) || Array.isArray(karte)) {
-      log.warn(`Kartenobjekt ${id} bleibt stehen, es ist unbrauchbar`);
-      continue;
-    }
-    uebernimm(stand, "karten", id, (0, import_konfiguration.zeileAusKarte)(id, karte));
-    stand.loeschen.push(`karten.${id}`);
-  }
-}
-async function profilobjekte(namespace, quelle, stand, log) {
+async function bereinigeProfilobjekte(namespace, quelle, ablage, log) {
   var _a, _b, _c, _d;
   const praefix = `${namespace}.profile.`;
+  let bereinigt = 0;
   for (const objekt of await quelle.objekte("config", praefix)) {
     const id = objekt._id.slice(praefix.length);
     const native = (_a = objekt.native) != null ? _a : {};
+    const anzahl = (w) => Array.isArray(w) ? w.length : 0;
+    const alt = "freigaben" in native || "sperren" in native;
+    if (!(0, import_rechte.istKennung)(id) || !alt && BRAUCHBAR.profile(native)) {
+      continue;
+    }
     const profil = (0, import_rechte.alsProfil)({
       name: native.name,
       raeume: (_b = native.raeume) != null ? _b : [],
       karten: (_c = native.karten) != null ? _c : [],
       gesperrt: (_d = native.gesperrt) != null ? _d : []
     });
-    if (!(0, import_rechte.istKennung)(id) || Array.isArray(profil)) {
-      log.warn(`Profilobjekt ${id} bleibt stehen, es ist unbrauchbar und gibt keine Rechte`);
+    if (Array.isArray(profil)) {
       continue;
     }
-    uebernimm(stand, "profile", id, (0, import_konfiguration.zeileAusProfil)(id, profil));
-    stand.loeschen.push(`profile.${id}`);
-    const anzahl = (w) => Array.isArray(w) ? w.length : 0;
+    await ablage.schreibeEintrag("profile", id, profil.name, profil);
+    bereinigt++;
     const freigaben = anzahl(native.freigaben);
     const sperren = anzahl(native.sperren);
     if (freigaben + sperren > 0) {
@@ -135,6 +132,7 @@ async function profilobjekte(namespace, quelle, stand, log) {
       );
     }
   }
+  return bereinigt;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

@@ -1,7 +1,6 @@
 // ioBroker im Speicher für Tests: Apps, Profile, Karten, Räume, Datenpunkte und Zustände.
 import type { Protokoll } from '../src/basis/grenzen';
 import { Katalog, type Katalogquelle } from '../src/app/katalog';
-import type { Zeile } from '../src/app/konfiguration';
 import {
     type AppDaten,
     type Appablage,
@@ -10,6 +9,7 @@ import {
     type Datenpunktname,
     type Hinweisstand,
     LETZTE,
+    type Ordner,
 } from '../src/app/objekte';
 import type { Karte, Profil } from '../src/app/rechte';
 import type { Umstellungsablage } from '../src/app/umstellung';
@@ -34,8 +34,14 @@ export class Speicherablage implements Appablage, Umstellungsablage {
     public readonly geschrieben: string[] = [];
     // Für Tests, die ein Scheitern der Datenbank brauchen
     public scheitern = false;
-    // Was die Umstellung in die Instanzeinstellungen geschrieben hat
-    public readonly einstellungen: { karten: Zeile[]; profile: Zeile[] } = { karten: [], profile: [] };
+    // Ob die Umstellung Karten und Profile der Instanzeinstellungen geleert hat
+    public geleert = false;
+    // Was die Ablage unter karten und profile geschrieben hat, je mit native. Gelesen wird mit quelle aus deren
+    // Objekten, damit auch zählt, was ein Test dort anlegt.
+    public readonly eintraege_: Record<Ordner, Map<string, Record<string, unknown>>> = {
+        karten: new Map(),
+        profile: new Map(),
+    };
 
     // Mit quelle wie in ioBroker: Änderungen an Apps und Profilen kommen als objectChange beim Katalog an.
     public constructor(private readonly quelle?: Speicherquelle) {}
@@ -66,10 +72,45 @@ export class Speicherablage implements Appablage, Umstellungsablage {
         this.quelle?.app(appId, undefined);
         return Promise.resolve();
     }
-    public ergaenzeEinstellungen(karten: Zeile[], profile: Zeile[]): Promise<void> {
-        this.einstellungen.karten.push(...karten);
-        this.einstellungen.profile.push(...profile);
+    public leereEinstellungen(): Promise<void> {
+        this.geleert = true;
         return Promise.resolve();
+    }
+    public liesEintrag(ordner: Ordner, id: string): Promise<Record<string, unknown> | undefined> {
+        return Promise.resolve(this.eintrag_(ordner, id));
+    }
+    public schreibeEintrag(ordner: Ordner, id: string, name: string, native: object): Promise<void> {
+        if (this.scheitern) {
+            return Promise.reject(new Error('Datenbank weg'));
+        }
+        this.eintraege_[ordner].set(id, structuredClone(native) as Record<string, unknown>);
+        this.quelle?.eintrag(ordner, id, name, native);
+        return Promise.resolve();
+    }
+    public loescheEintrag(ordner: Ordner, id: string): Promise<void> {
+        this.eintraege_[ordner].delete(id);
+        this.quelle?.eintrag(ordner, id, '', null);
+        return Promise.resolve();
+    }
+    public legeKarte_(id: string, karte: Karte): Promise<void> {
+        return this.schreibeEintrag('karten', id, karte.name, karte);
+    }
+    public legeProfil_(id: string, profil: Profil): Promise<void> {
+        return this.schreibeEintrag('profile', id, profil.name, profil);
+    }
+    // Wie liesEintrag, für Erwartungen in Tests
+    public karte_(id: string): Karte | undefined {
+        return this.eintrag_('karten', id) as Karte | undefined;
+    }
+    public profil_(id: string): Profil | undefined {
+        return this.eintrag_('profile', id) as Profil | undefined;
+    }
+    private eintrag_(ordner: Ordner, id: string): Record<string, unknown> | undefined {
+        if (!this.quelle) {
+            return structuredClone(this.eintraege_[ordner].get(id));
+        }
+        const objekt = this.quelle.get(`${NAMESPACE}.${ordner}.${id}`);
+        return objekt?.type === 'config' ? structuredClone(objekt.native) : undefined;
     }
     public loescheObjekt(id: string): Promise<void> {
         this.quelle?.objekt_(`${NAMESPACE}.${id}`, null);
@@ -163,9 +204,6 @@ export class Speicherquelle implements Zustandsquelle, Katalogquelle {
     public readonly zustaende_ = new Map<string, ioBroker.State>();
     public readonly abonniert = new Set<string>();
     public readonly aufrufe: string[] = [];
-    // Karten und Profile wie in den Instanzeinstellungen
-    public readonly karten = new Map<string, Karte>();
-    public readonly profile = new Map<string, Profil>();
     // Wie stateChange in ioBroker, nur für abonnierte IDs
     public beiAenderung: (id: string, state: ioBroker.State | null) => void = () => undefined;
 
@@ -200,25 +238,18 @@ export class Speicherquelle implements Zustandsquelle, Katalogquelle {
         return this.objekt_(`enum.rooms.${id}`, { type: 'enum', common: { name, members: mitglieder } });
     }
 
-    // Wie neue Instanzeinstellungen; in ioBroker käme das mit einem Neustart.
+    // Wie ein Profil- oder Kartenobjekt, das jemand anlegt, ändert oder löscht
     public profil(profilId: string, profil: Profil | null): this {
-        if (profil) {
-            this.profile.set(profilId, profil);
-        } else {
-            this.profile.delete(profilId);
-        }
-        this.katalog.konfiguriere({ karten: this.karten, profile: this.profile });
-        return this;
+        return this.eintrag('profile', profilId, profil?.name ?? '', profil);
     }
-
     public karte(kartenId: string, karte: Karte | null): this {
-        if (karte) {
-            this.karten.set(kartenId, karte);
-        } else {
-            this.karten.delete(kartenId);
-        }
-        this.katalog.konfiguriere({ karten: this.karten, profile: this.profile });
-        return this;
+        return this.eintrag('karten', kartenId, karte?.name ?? '', karte);
+    }
+    public eintrag(ordner: Ordner, id: string, name: string, native: object | null): this {
+        return this.objekt_(
+            `${NAMESPACE}.${ordner}.${id}`,
+            native && { type: 'config', common: { name }, native: structuredClone(native) },
+        );
     }
 
     // Objekte, wie sie ein früherer Stand des Adapters hinterließ (Umstellung)

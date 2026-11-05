@@ -1,0 +1,216 @@
+import type { Katalog } from '../app/katalog';
+import type { Eintragsablage } from '../app/objekte';
+import {
+    BEZEICHNUNG_LAENGE,
+    KARTENARTEN,
+    KARTENTYPEN,
+    KARTEN_HOECHSTENS,
+    type Karte,
+    type Kartenmaengel,
+    type Kartentyp,
+    NAME_LAENGE,
+    alsKarte,
+    liegtUnter,
+    maengelDerKarte,
+    text,
+} from '../app/rechte';
+import type { Protokoll } from '../basis/grenzen';
+import { type Ablehnung, Eintraege, nachricht, seitenadresse } from './eintraege';
+
+// Über sendTo von der Kartenseite (admin/karten.html), eingebettet im Reiter „Karten“ der Instanzeinstellungen
+export const KARTENBEFEHLE: readonly string[] = [
+    'kartenseite',
+    'kartenstand',
+    'datenpunkte',
+    'speichereKarte',
+    'loescheKarte',
+];
+
+// Mehr hilft beim Suchen nicht; die Seite bittet dann um ein genaueres Wort.
+const TREFFER = 100;
+
+export interface Kartenzeile extends Karte {
+    id: string;
+    maengel: Kartenmaengel;
+}
+
+export interface Kartenstand {
+    sprache: string;
+    raeume: { id: string; name: string }[];
+    // Je Typ seine Teile mit passenden Datenpunkttypen, wie sie der Adapter prüft
+    arten: Record<
+        Kartentyp,
+        { teile: { teil: string; typen: readonly string[] }[]; pflicht: readonly string[]; bezeichnungen: boolean }
+    >;
+    karten: Kartenzeile[];
+    // Namen der Datenpunkte in den Karten, in der Systemsprache
+    namen: Record<string, string>;
+    hoechstens: number;
+    laengen: { name: number; bezeichnung: number };
+}
+
+export interface Treffer {
+    id: string;
+    name: string;
+    typ: string;
+    einheit?: string;
+}
+
+const ARTEN = Object.fromEntries(
+    KARTENTYPEN.map(typ => {
+        const art = KARTENARTEN[typ];
+        return [
+            typ,
+            {
+                teile: Object.entries(art.teile).map(([teil, t]) => ({ teil, typen: t.typen })),
+                pflicht: art.pflicht,
+                bezeichnungen: art.bezeichnungen === true,
+            },
+        ];
+    }),
+) as Kartenstand['arten'];
+
+// Nur Texte zu bekannten Schlüsseln, ohne Leerraum an den Rändern; leere fallen weg.
+function texte(roh: unknown, erlaubt: string[]): Record<string, string> {
+    if (!roh || typeof roh !== 'object' || Array.isArray(roh)) {
+        return {};
+    }
+    return Object.fromEntries(
+        Object.entries(roh)
+            .filter(([k, w]) => erlaubt.includes(k) && typeof w === 'string' && w.trim() !== '')
+            .map(([k, w]) => [k, (w as string).trim()]),
+    );
+}
+
+// Teile anderer Typen und Bezeichnungen ohne Teil fallen weg; prüfen muss danach alsKarte.
+function bereinigt(roh: unknown): unknown {
+    if (!roh || typeof roh !== 'object' || Array.isArray(roh)) {
+        return roh;
+    }
+    const r = roh as Record<string, unknown>;
+    const art = KARTENARTEN[r.typ as Kartentyp] as (typeof KARTENARTEN)[Kartentyp] | undefined;
+    if (!art) {
+        return roh;
+    }
+    const teile = texte(r.teile, Object.keys(art.teile));
+    const bezeichnungen = art.bezeichnungen ? texte(r.bezeichnungen, Object.keys(teile)) : {};
+    return {
+        name: typeof r.name === 'string' ? r.name.trim() : r.name,
+        typ: r.typ,
+        raum: typeof r.raum === 'string' ? r.raum : '',
+        teile,
+        ...(Object.keys(bezeichnungen).length > 0 ? { bezeichnungen } : {}),
+    };
+}
+
+// Karten im Reiter „Karten“: anzeigen mit Mängeln je Teil, Datenpunkte suchen, anlegen, ändern, löschen
+export class Kartenseite {
+    private readonly karten: Eintraege<Karte>;
+
+    public constructor(
+        private readonly o: {
+            namespace: string;
+            // undefined, solange der Start nicht so weit ist
+            katalog: () => Katalog | undefined;
+            ablage: Eintragsablage;
+            log: Protokoll;
+            jetzt?: () => number;
+        },
+    ) {
+        this.karten = new Eintraege(
+            {
+                ordner: 'karten',
+                kennbuchstabe: 'k',
+                was: 'Karte',
+                pruefe: roh => alsKarte(bereinigt(roh)),
+                imKatalog: (katalog, id) => katalog.karte(id),
+                anzahl: katalog => katalog.karten().length,
+                hoechstens: KARTEN_HOECHSTENS,
+            },
+            o,
+        );
+    }
+
+    public async beantworte(befehl: string, roh: unknown): Promise<unknown> {
+        if (befehl === 'kartenseite') {
+            return seitenadresse(this.o.namespace, 'karten.html');
+        }
+        const katalog = this.o.katalog();
+        if (!katalog) {
+            return { fehler: 'nichtBereit' } satisfies Ablehnung;
+        }
+        const n = nachricht(roh);
+        switch (befehl) {
+            case 'kartenstand':
+                return this.stand(katalog);
+            case 'datenpunkte':
+                return this.suche(katalog, n);
+            case 'speichereKarte':
+                return this.mitStand(katalog, await this.karten.speichere(katalog, n.id, n.karte));
+            case 'loescheKarte':
+                return this.mitStand(katalog, await this.karten.loesche(katalog, n.id));
+            default:
+                return undefined;
+        }
+    }
+
+    private mitStand(katalog: Katalog, antwort: { id: string } | Ablehnung): unknown {
+        return 'fehler' in antwort ? antwort : { id: antwort.id, stand: this.stand(katalog) };
+    }
+
+    private stand(katalog: Katalog): Kartenstand {
+        const sprache = katalog.sprache;
+        const karten = katalog.karten().map(([id, k]) => ({
+            id,
+            name: k.name,
+            typ: k.typ,
+            raum: k.raum,
+            teile: { ...k.teile },
+            ...(k.bezeichnungen ? { bezeichnungen: { ...k.bezeichnungen } } : {}),
+            maengel: maengelDerKarte(k, dp => katalog.datenpunkt(dp)),
+        }));
+        const namen: Record<string, string> = {};
+        for (const dp of karten.flatMap(k => Object.values(k.teile))) {
+            const name = katalog.datenpunkt(dp)?.name;
+            if (typeof name === 'string' && name !== dp) {
+                namen[dp] = name;
+            }
+        }
+        return {
+            sprache,
+            raeume: katalog.raeume().map(r => ({ id: r.id, name: text(r.name, sprache, r.id) })),
+            arten: ARTEN,
+            karten,
+            namen,
+            hoechstens: KARTEN_HOECHSTENS,
+            laengen: { name: NAME_LAENGE, bezeichnung: BEZEICHNUNG_LAENGE },
+        };
+    }
+
+    // Jedes Wort muss in ID oder Name stehen; nur Datenpunkte, deren Typ zum Teil passt, nie unter system
+    private suche(katalog: Katalog, n: Record<string, unknown>): { treffer: Treffer[]; mehr: boolean } {
+        const art = KARTENARTEN[n.typ as Kartentyp]?.teile[String(n.teil)] as
+            (typeof KARTENARTEN)[Kartentyp]['teile'][string] | undefined;
+        if (!art) {
+            return { treffer: [], mehr: false };
+        }
+        const woerter = (typeof n.suche === 'string' ? n.suche : '')
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 8);
+        const treffer: Treffer[] = [];
+        for (const [id, m] of katalog.alleDatenpunkte()) {
+            if (!art.typen.includes(m.type as 'boolean') || liegtUnter(id, 'system')) {
+                continue;
+            }
+            const name = typeof m.name === 'string' ? m.name : id;
+            const heu = `${id}\n${name}`.toLowerCase();
+            if (woerter.every(w => heu.includes(w))) {
+                treffer.push({ id, name, typ: m.type!, ...(typeof m.unit === 'string' ? { einheit: m.unit } : {}) });
+            }
+        }
+        treffer.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        return { treffer: treffer.slice(0, TREFFER), mehr: treffer.length > TREFFER };
+    }
+}

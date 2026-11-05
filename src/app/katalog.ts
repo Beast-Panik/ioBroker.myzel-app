@@ -1,7 +1,16 @@
 import type { Protokoll } from '../basis/grenzen';
-import type { Konfiguration } from './konfiguration';
-import { appIdAus } from './objekte';
-import { type Aufzaehlung, type Karte, type Merkmale, type Objektquelle, type Profil, merkmale } from './rechte';
+import { type Ordner, appIdAus } from './objekte';
+import {
+    type Aufzaehlung,
+    type Karte,
+    type Merkmale,
+    type Objektquelle,
+    type Profil,
+    alsKarte,
+    alsProfil,
+    istKennung,
+    merkmale,
+} from './rechte';
 
 // Wie Admin: Englisch, solange im System keine Sprache gesetzt ist
 const SPRACHE = 'en';
@@ -14,11 +23,17 @@ export interface Katalogquelle {
     objekte(typ: ioBroker.ObjectType, praefix: string): Promise<ioBroker.Object[]>;
 }
 
+// Je Ordner: wie der Inhalt geprüft wird und was eine unbrauchbare Karte oder ein unbrauchbares Profil bewirkt
+const EINTRAEGE = {
+    karten: { pruefe: alsKarte, unbrauchbar: (id: string) => `Karte ${id} ist unbrauchbar und fehlt auf den Handys` },
+    profile: { pruefe: alsProfil, unbrauchbar: (id: string) => `Profil ${id} ist unbrauchbar und gibt keine Rechte` },
+} satisfies Record<Ordner, { pruefe: (native: unknown) => unknown; unbrauchbar: (id: string) => string }>;
+
 /**
  * Alles, wovon die Rechte abhängen, im Speicher: Datenpunkte, Räume, Profile, Karten, Systemsprache. Karten und Profile
- * kommen aus den Instanzeinstellungen; ändern sie sich, startet ioBroker die Instanz neu. Alle Datenpunkte, nicht nur die
- * aus Karten: Eine Ansichtsabfrage durchläuft in der Objektdatenbank ohnehin alle Objekte. So wird einmal geladen und mit
- * objectChange nachgeführt.
+ * sind Objekte unter <namespace>.karten und <namespace>.profile und gelten ohne Neustart (KONZEPT-KARTEN.md, Abschnitt
+ * 12). Alle Datenpunkte, nicht nur die aus Karten: Eine Ansichtsabfrage durchläuft in der Objektdatenbank ohnehin alle
+ * Objekte. So wird einmal geladen und mit objectChange nachgeführt.
  */
 export class Katalog implements Objektquelle {
     public sprache = SPRACHE;
@@ -26,8 +41,9 @@ export class Katalog implements Objektquelle {
     private readonly datenpunkte = new Map<string, Merkmale>();
     private readonly raeumeNachId = new Map<string, Aufzaehlung>();
     private raeumeSortiert?: Aufzaehlung[];
-    private profile = new Map<string, Profil>();
-    private kartenSortiert: [string, Karte][] = [];
+    private readonly eintraege = { karten: new Map<string, Karte>(), profile: new Map<string, Profil>() };
+    private kartenSortiert?: [string, Karte][];
+    private profileSortiert?: [string, Profil][];
     private puffer?: [string, Objektaenderung][];
     private laden: Promise<void> = Promise.resolve();
     private hoerer: () => void = () => undefined;
@@ -55,6 +71,8 @@ export class Katalog implements Objektquelle {
                 this.quelle.objekte('config', 'system.config'),
                 this.quelle.objekte('state', ''),
                 this.quelle.objekte('enum', 'enum.rooms.'),
+                this.quelle.objekte('config', `${this.namespace}.karten.`),
+                this.quelle.objekte('config', `${this.namespace}.profile.`),
             ]);
             for (const objekt of listen.flat()) {
                 this.uebernimmSicher(objekt._id, objekt);
@@ -65,13 +83,6 @@ export class Katalog implements Objektquelle {
         } finally {
             this.puffer = undefined;
         }
-    }
-
-    // Einmal beim Start; die Tests ändern damit Karten und Profile wie ein Neustart mit neuen Einstellungen.
-    public konfiguriere(konfiguration: Konfiguration): void {
-        this.profile = new Map(konfiguration.profile);
-        this.kartenSortiert = [...konfiguration.karten].sort(([a], [b]) => a.localeCompare(b));
-        this.hoerer();
     }
 
     public beiAenderung(hoerer: () => void): void {
@@ -93,16 +104,24 @@ export class Katalog implements Objektquelle {
     }
 
     public profil(profilId: string): Profil | undefined {
-        return this.profile.get(profilId);
+        return this.eintraege.profile.get(profilId);
     }
 
     // Nur brauchbare Profile, nach Namen sortiert
     public alleProfile(): [string, Profil][] {
-        return [...this.profile].sort(([, a], [, b]) => a.name.localeCompare(b.name));
+        this.profileSortiert ??= [...this.eintraege.profile].sort(
+            ([a, x], [b, y]) => x.name.localeCompare(y.name) || a.localeCompare(b),
+        );
+        return this.profileSortiert;
     }
 
     public karten(): [string, Karte][] {
+        this.kartenSortiert ??= [...this.eintraege.karten].sort(([a], [b]) => a.localeCompare(b));
         return this.kartenSortiert;
+    }
+
+    public karte(kartenId: string): Karte | undefined {
+        return this.eintraege.karten.get(kartenId);
     }
 
     public raeume(): Aufzaehlung[] {
@@ -112,6 +131,10 @@ export class Katalog implements Objektquelle {
 
     public datenpunkt(id: string): Merkmale | undefined {
         return this.datenpunkte.get(id);
+    }
+
+    public alleDatenpunkte(): IterableIterator<[string, Merkmale]> {
+        return this.datenpunkte.entries();
     }
 
     // Objekte schreiben auch andere Adapter und Skripte: Ein kaputtes darf weder das Laden noch objectChange abbrechen.
@@ -148,6 +171,12 @@ export class Katalog implements Objektquelle {
         if (appIdAus(this.namespace, id)) {
             return true;
         }
+        for (const ordner of ['karten', 'profile'] as const) {
+            const praefix = `${this.namespace}.${ordner}.`;
+            if (id.startsWith(praefix)) {
+                return this.uebernimmEintrag(ordner, id.slice(praefix.length), objekt);
+            }
+        }
         if (id.startsWith('enum.rooms.')) {
             this.raeumeSortiert = undefined;
             if (objekt?.type !== 'enum') {
@@ -163,5 +192,25 @@ export class Katalog implements Objektquelle {
             return true;
         }
         return this.datenpunkte.delete(id);
+    }
+
+    // Ein unbrauchbarer Eintrag fehlt, bis er wieder passt; was darunter liegt, etwa ein Datenpunkt, ist keiner.
+    private uebernimmEintrag(ordner: Ordner, id: string, objekt: Objektaenderung): boolean {
+        if (!istKennung(id)) {
+            return false;
+        }
+        this.kartenSortiert = undefined;
+        this.profileSortiert = undefined;
+        const eintraege: Map<string, unknown> = this.eintraege[ordner];
+        if (objekt?.type !== 'config') {
+            return eintraege.delete(id);
+        }
+        const eintrag = EINTRAEGE[ordner].pruefe(objekt.native);
+        if (Array.isArray(eintrag)) {
+            this.log.warn(`${EINTRAEGE[ordner].unbrauchbar(id)}: ${eintrag.join('; ')}`);
+            return eintraege.delete(id);
+        }
+        eintraege.set(id, structuredClone(eintrag));
+        return true;
     }
 }

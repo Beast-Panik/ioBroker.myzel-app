@@ -24,8 +24,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var utils = __toESM(require("@iobroker/adapter-core"));
 var import_gemeinsam_schema = __toESM(require("../protokoll/v1/gemeinsam.schema.json"));
 var import_geraete = require("./admin/geraete");
+var import_kartenseite = require("./admin/kartenseite");
+var import_profilseite = require("./admin/profilseite");
 var import_katalog = require("./app/katalog");
-var import_konfiguration = require("./app/konfiguration");
 var import_objekte = require("./app/objekte");
 var import_rechte = require("./app/rechte");
 var import_umstellung = require("./app/umstellung");
@@ -36,12 +37,12 @@ var import_zertifikat = require("./basis/zertifikat");
 var import_einstellungen = require("./einstellungen");
 var import_heimnetz = require("./zugang/heimnetz");
 const IDENTITAET = "identitaet";
-const liste = (w) => Array.isArray(w) ? w : [];
 const pruefeAdapterId = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/adapterId` }, [import_gemeinsam_schema.default]);
 class MyzelApp extends utils.Adapter {
   server;
   katalog;
   betrieb;
+  seiten = [];
   beendet = false;
   constructor(options = {}) {
     super({
@@ -62,6 +63,16 @@ class MyzelApp extends utils.Adapter {
   }
   async onReady() {
     new import_geraete.Geraete(this, new import_geraete.Verwaltung({ namespace: this.namespace, log: this.log, betrieb: () => this.betrieb }));
+    const seite = {
+      namespace: this.namespace,
+      katalog: () => this.katalog,
+      ablage: new import_objekte.IoBrokerAblage(this),
+      log: this.log
+    };
+    this.seiten = [
+      [import_kartenseite.KARTENBEFEHLE, new import_kartenseite.Kartenseite(seite)],
+      [import_profilseite.PROFILBEFEHLE, new import_profilseite.Profilseite(seite)]
+    ];
     try {
       await this.starte();
     } catch (fehler) {
@@ -84,33 +95,18 @@ class MyzelApp extends utils.Adapter {
     const quelle = new import_objekte.IoBrokerQuelle(this);
     const ablage = new import_objekte.IoBrokerAblage(this);
     const adressen = () => this.config.adressen.length > 0 ? this.config.adressen : (0, import_heimnetz.automatischeAdressen)(this.config.port);
-    const neu = await (0, import_umstellung.stelleUm)(this.namespace, quelle, this.config, ablage, this.log).catch((fehler2) => {
-      this.log.error(`Umstellung auf Karten in den Einstellungen: ${fehler2.message}`);
-      return { karten: [], profile: [] };
-    });
-    const katalog = new import_katalog.Katalog(this.namespace, this.log, quelle);
-    katalog.konfiguriere(
-      (0, import_konfiguration.liesKonfiguration)(
-        {
-          karten: [...liste(this.config.karten), ...neu.karten],
-          profile: [...liste(this.config.profile), ...neu.profile]
-        },
-        this.log
-      )
+    await (0, import_umstellung.stelleUm)(this.namespace, quelle, this.config, ablage, this.log).catch(
+      (fehler2) => this.log.error(`Umstellung auf Karten- und Profilobjekte: ${fehler2.message}`)
     );
-    this.katalog = katalog;
+    const katalog = new import_katalog.Katalog(this.namespace, this.log, quelle);
     await this.subscribeForeignObjectsAsync("*");
     await katalog.lade();
-    this.log.info(`${katalog.anzahl} Datenpunkte im Katalog`);
+    this.katalog = katalog;
+    this.log.info(
+      `${katalog.anzahl} Datenpunkte, ${katalog.karten().length} Karten und ${katalog.alleProfile().length} Profile im Katalog`
+    );
     for (const mangel of (0, import_rechte.kartenmaengel)(katalog)) {
       this.log.warn(mangel);
-    }
-    const geordnet = await ablage.ordneKarten((karten) => (0, import_konfiguration.nachRaeumen)(karten, katalog.raeume(), katalog.sprache)).catch((fehler2) => {
-      this.log.warn(`Karten nicht nach R\xE4umen geordnet: ${fehler2.message}`);
-      return false;
-    });
-    if (geordnet) {
-      this.log.info("Karten in den Einstellungen nach R\xE4umen geordnet");
     }
     const server = await (0, import_server.starteServer)({
       adapterId: identitaet.adapterId,
@@ -149,25 +145,21 @@ class MyzelApp extends utils.Adapter {
       this.log.warn((0, import_geraete.adminOffen)(offen).de);
     }
   }
-  // Auswahllisten der Reiter Karten und Profile in den Instanzeinstellungen (admin/jsonConfig.json). Räume direkt aus
-  // ioBroker, damit die Listen auch gehen, wenn der Server nicht läuft.
+  // Die Seiten in den Reitern Karten und Profile (admin/jsonConfig.json)
   async beantworte(obj) {
     var _a;
-    if (!(obj == null ? void 0 : obj.callback) || obj.command !== "raeume" && obj.command !== "karten") {
+    const seite = (_a = this.seiten.find(([befehle]) => befehle.includes(obj == null ? void 0 : obj.command))) == null ? void 0 : _a[1];
+    if (!(obj == null ? void 0 : obj.callback) || !seite) {
       return;
     }
-    let antwort = [];
+    let antwort;
     try {
-      const objekte = await this.getForeignObjectsAsync("enum.rooms.*", "enum");
-      const raeume = Object.values(objekte).map((o) => {
-        var _a2;
-        return { id: o._id, name: (_a2 = o.common) == null ? void 0 : _a2.name, mitglieder: [] };
-      });
-      antwort = obj.command === "raeume" ? (0, import_konfiguration.raumoptionen)(raeume) : (0, import_konfiguration.kartenoptionen)((_a = obj.message) == null ? void 0 : _a.karten, raeume);
+      antwort = await seite.beantworte(obj.command, obj.message);
     } catch (fehler) {
-      this.log.warn(`Auswahl ${obj.command} f\xFCr die Einstellungen: ${fehler.message}`);
+      this.log.warn(`${obj.command}: ${fehler.message}`);
+      antwort = { fehler: "gescheitert", einzelheiten: [fehler.message] };
     }
-    this.sendTo(obj.from, obj.command, antwort, obj.callback);
+    this.sendTo(obj.from, obj.command, antwort != null ? antwort : null, obj.callback);
   }
   async adminOhneAnmeldung() {
     const praefix = "system.adapter.admin.";

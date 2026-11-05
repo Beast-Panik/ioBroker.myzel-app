@@ -22,6 +22,25 @@ export default [
         ],
     },
     {
+        // Karten- und Profilseite laufen im Browser des Admins; io kommt aus dessen lib/js/socket.io.js.
+        files: ['admin/**/*.js'],
+        languageOptions: {
+            sourceType: 'module',
+            globals: {
+                window: 'readonly',
+                document: 'readonly',
+                location: 'readonly',
+                navigator: 'readonly',
+                matchMedia: 'readonly',
+                getComputedStyle: 'readonly',
+                setTimeout: 'readonly',
+                clearTimeout: 'readonly',
+                URLSearchParams: 'readonly',
+                io: 'readonly',
+            },
+        },
+    },
+    {
         // Projektregel: Kommentare nur, wo sie ein nicht offensichtliches Warum erklären. Pflicht-JSDoc widerspricht dem.
         rules: {
             'jsdoc/require-jsdoc': 'off',

@@ -165,30 +165,53 @@ tests.integration(path.join(__dirname, '..'), {
                 identitaet = (await harness.objects.getObjectAsync('myzel-app.0.identitaet')).native;
             });
 
-            it('übernimmt Geräte, Karten und Profile früherer Stände in die Einstellungen und löscht die Objekte', async () => {
-                for (const id of ['geraete.altlampe', 'karten.altschalter', 'profile.alt']) {
-                    expect(await harness.objects.getObjectAsync(`myzel-app.0.${id}`), id).to.equal(null);
-                }
-                const { karten, profile } = (await harness.objects.getObjectAsync('system.adapter.myzel-app.0')).native;
-                // Danach nach Räumen geordnet: Testraum, dann ohne Raum, je nach Namen
-                expect(karten.map(k => k.id)).to.deep.equal(['klima', 'lampe', 'altlampe', 'altschalter', 'geheim']);
-                expect(karten[2]).to.deep.equal({
-                    id: 'altlampe',
+            it('macht Karten und Profile aus Einstellungen, Geräten und alten Profilobjekten zu Objekten', async () => {
+                expect(await harness.objects.getObjectAsync('myzel-app.0.geraete.altlampe')).to.equal(null);
+                const karte = id => harness.objects.getObjectAsync(`myzel-app.0.karten.${id}`);
+                expect(await karte('lampe')).to.deep.include({
+                    type: 'config',
+                    common: { name: 'Lampe' },
+                    native: { name: 'Lampe', typ: 'schalter', raum, teile: { schalten: lampe } },
+                });
+                expect((await karte('klima')).native).to.deep.equal({
+                    name: 'Klima',
+                    typ: 'messwert',
+                    raum,
+                    teile: { wert1: temperatur },
+                    bezeichnungen: { wert1: 'Innen' },
+                });
+                expect((await karte('altlampe')).native).to.deep.equal({
                     name: 'Altlampe',
                     typ: 'lampe',
                     raum: '',
-                    schalten: altlampe,
+                    teile: { schalten: altlampe },
                 });
-                expect(profile.map(p => p.id)).to.deep.equal(['familie', 'alt']);
-                expect(profile[1]).to.deep.equal({
-                    id: 'alt',
+                expect((await karte('geheim')).native.teile).to.deep.equal({ schalten: geheim });
+                // Kartenobjekte aus dem Entwicklungsstand sind schon richtig abgelegt und bleiben, wie sie sind.
+                expect((await karte('altschalter')).native.name).to.equal('Altschalter');
+                expect((await harness.objects.getObjectAsync('myzel-app.0.karten')).type).to.equal('folder');
+                const { karten, profile } = (await harness.objects.getObjectAsync('system.adapter.myzel-app.0')).native;
+                expect(karten).to.deep.equal([]);
+                expect(profile).to.deep.equal([]);
+                const profil = id => harness.objects.getObjectAsync(`myzel-app.0.profile.${id}`);
+                expect(await profil('familie')).to.deep.include({
+                    type: 'config',
+                    common: { name: 'Familie' },
+                    native: {
+                        name: 'Familie',
+                        raeume: [{ enum: raum, recht: 'schreiben' }],
+                        karten: [{ id: 'altlampe', recht: 'lesen' }],
+                        gesperrt: [],
+                    },
+                });
+                // Ein Profilobjekt aus 0.1.x verliert an Ort und Stelle Freigaben und Sperren von Datenpunkten.
+                expect((await profil('alt')).native).to.deep.equal({
                     name: 'Alt',
-                    raeumeSchreiben: [],
-                    raeumeLesen: [],
-                    kartenSchreiben: [],
-                    kartenLesen: [],
+                    raeume: [],
+                    karten: [],
                     gesperrt: [],
                 });
+                expect((await harness.objects.getObjectAsync('myzel-app.0.profile')).type).to.equal('folder');
             });
 
             it('entfernt beim Start den Kanal benachrichtigung von 0.2.x', async () => {
@@ -310,8 +333,8 @@ tests.integration(path.join(__dirname, '..'), {
                 app.ws.close();
             });
 
-            // Karten und Profile ändert nur das Speichern der Einstellungen, und das startet die Instanz neu. Ohne Neustart
-            // wirken Datenpunkte, Räume und die Apps selbst.
+            // Profile ändert nur das Speichern der Einstellungen, und das startet die Instanz neu. Ohne Neustart wirken
+            // Datenpunkte, Räume, Karten (Test Kartenseite) und die Apps selbst.
             it('schickt rechte bei Änderungen an Datenpunkt und Raum und trennt eine entfernte App', async function () {
                 this.timeout(30_000);
                 const zugang = await legeApp('cdefghij', 'familie');
@@ -467,23 +490,122 @@ tests.integration(path.join(__dirname, '..'), {
             const frage = (command, message) =>
                 new Promise(resolve => harness.sendTo('myzel-app.0', command, message, resolve));
 
-            it('liefert die Auswahllisten der Reiter Profile: Räume aus ioBroker, Karten aus dem Formular', async () => {
+            it('Kartenseite: legt Karten an, ändert und löscht sie ohne Neustart, eine App sieht es gleich', async function () {
+                this.timeout(30_000);
                 await harness.enableSendTo();
-                expect(await frage('raeume', {})).to.deep.include({
-                    value: raum,
-                    label: { en: 'Living room', de: 'Wohnraum' },
-                });
-                expect(
-                    await frage('karten', {
-                        karten: [
-                            { id: 'neu', name: 'Neu', typ: 'thermostat', raum },
-                            { id: 'ohne', name: '', typ: 'lampe', raum: '' },
-                        ],
-                    }),
-                ).to.deep.equal([
-                    { value: 'neu', label: { en: 'Neu (Thermostat, Living room)', de: 'Neu (Thermostat, Wohnraum)' } },
+                expect(await frage('kartenseite', null)).to.equal('adapter/myzel-app/karten.html?instanz=myzel-app.0');
+                const stand = await frage('kartenstand', null);
+                expect(stand.karten.map(k => k.id)).to.have.members([
+                    'altlampe',
+                    'altschalter',
+                    'geheim',
+                    'klima',
+                    'lampe',
                 ]);
-                expect(await frage('karten', null)).to.deep.equal([]);
+                expect(stand.karten.find(k => k.id === 'altschalter').maengel.folge).to.equal('fehlt');
+                expect(stand.raeume.map(r => r.id)).to.include(raum);
+
+                const zugang = await legeApp('fghijklm', 'familie');
+                const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
+                    t: 'hallo',
+                    v: 3,
+                    app: 'fghijklm',
+                    zugang,
+                    geraet,
+                });
+                const ids = karten => karten.map(k => k.id);
+                expect(ids(app.erste.karten)).to.deep.equal(['altlampe', 'klima', 'lampe']);
+
+                const neu = { name: 'Neu', typ: 'schalter', raum, teile: { schalten: geheim } };
+                const gespeichert = await frage('speichereKarte', { karte: neu });
+                expect(gespeichert.id).to.match(/^k[0-9a-z]+$/);
+                expect(
+                    (await harness.objects.getObjectAsync(`myzel-app.0.karten.${gespeichert.id}`)).native,
+                ).to.deep.equal(neu);
+                const mitNeu = await app.naechste(5000);
+                expect(mitNeu.t).to.equal('rechte');
+                expect(ids(mitNeu.karten)).to.include(gespeichert.id);
+
+                const umbenannt = await frage('speichereKarte', { id: gespeichert.id, karte: { ...neu, raum: '' } });
+                expect(umbenannt.stand.karten.find(k => k.id === gespeichert.id).raum).to.equal('');
+                // Ohne Raum gehört die Karte nicht mehr zum Profil Familie.
+                expect(ids((await app.naechste(5000)).karten)).to.not.include(gespeichert.id);
+
+                expect(await frage('speichereKarte', { karte: { ...neu, typ: 'rollladen' } })).to.have.property(
+                    'fehler',
+                    'ungueltig',
+                );
+                const geloescht = await frage('loescheKarte', { id: gespeichert.id });
+                expect(ids(geloescht.stand.karten)).to.not.include(gespeichert.id);
+                expect(await harness.objects.getObjectAsync(`myzel-app.0.karten.${gespeichert.id}`)).to.equal(null);
+                expect(await frage('loescheKarte', { id: gespeichert.id })).to.deep.equal({ fehler: 'weg' });
+                // Dieselbe Verbindung die ganze Zeit: Die Instanz lief durch.
+                expect(app.ws.readyState).to.equal(WebSocket.OPEN);
+                app.ws.close();
+            });
+
+            it('Profilseite: legt Profile an, ändert und löscht sie ohne Neustart, eine App sieht es gleich', async function () {
+                this.timeout(30_000);
+                expect(await frage('profilseite', null)).to.equal('adapter/myzel-app/profile.html?instanz=myzel-app.0');
+                const zugang = await legeApp('ghijklmn', 'familie');
+                const app = await anmelden(port, fingerabdruck(identitaet.zertifikat), {
+                    t: 'hallo',
+                    v: 3,
+                    app: 'ghijklmn',
+                    zugang,
+                    geraet,
+                });
+                const ids = karten => karten.map(k => k.id);
+                expect(ids(app.erste.karten)).to.deep.equal(['altlampe', 'klima', 'lampe']);
+                const stand = await frage('profilstand', null);
+                expect(stand.profile.map(p => p.id)).to.deep.equal(['alt', 'familie']);
+                const familie = stand.profile[1];
+                expect(familie.apps).to.include('ghijklmn');
+                expect(familie.sieht).to.deep.equal({ altlampe: 'lesen', klima: 'lesen', lampe: 'lesen' });
+
+                const nurKlima = {
+                    name: 'Familie',
+                    raeume: [],
+                    karten: [{ id: 'klima', recht: 'lesen' }],
+                    gesperrt: [],
+                };
+                expect(await frage('profilvorschau', { profil: nurKlima })).to.deep.equal({
+                    sieht: { klima: 'lesen' },
+                });
+                expect(await frage('speichereProfil', { id: 'familie', profil: nurKlima })).to.have.property(
+                    'id',
+                    'familie',
+                );
+                expect((await harness.objects.getObjectAsync('myzel-app.0.profile.familie')).native).to.deep.equal(
+                    nurKlima,
+                );
+                const weniger = await app.naechste(5000);
+                expect(weniger.t).to.equal('rechte');
+                expect(ids(weniger.karten)).to.deep.equal(['klima']);
+                const { raeume, karten, gesperrt } = familie;
+                await frage('speichereProfil', {
+                    id: 'familie',
+                    profil: { name: 'Familie', raeume, karten, gesperrt },
+                });
+                expect(ids((await app.naechste(5000)).karten)).to.deep.equal(['altlampe', 'klima', 'lampe']);
+
+                const gast = await frage('speichereProfil', {
+                    profil: { name: 'Gast', raeume: [], karten: [], gesperrt: [] },
+                });
+                expect(gast.id).to.match(/^p[0-9a-z]+$/);
+                expect((await harness.objects.getObjectAsync(`myzel-app.0.profile.${gast.id}`)).common.name).to.equal(
+                    'Gast',
+                );
+                expect(await frage('speichereProfil', { profil: { name: '', raeume: [] } })).to.have.property(
+                    'fehler',
+                    'ungueltig',
+                );
+                const geloescht = await frage('loescheProfil', { id: gast.id });
+                expect(geloescht.stand.profile.map(p => p.id)).to.deep.equal(['alt', 'familie']);
+                expect(await harness.objects.getObjectAsync(`myzel-app.0.profile.${gast.id}`)).to.equal(null);
+                // Dieselbe Verbindung die ganze Zeit: Die Instanz lief durch.
+                expect(app.ws.readyState).to.equal(WebSocket.OPEN);
+                app.ws.close();
             });
 
             it('Gerätemanager: koppelt per QR-Code, wählt das Profil, entfernt die App', async function () {

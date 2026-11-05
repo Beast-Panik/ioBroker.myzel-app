@@ -74,6 +74,7 @@ export interface Karte {
 export const KARTEN_HOECHSTENS = adapterAnApp.$defs.rechteInhalt.properties.karten.maxItems;
 export const NAME_LAENGE = 200;
 export const BEZEICHNUNG_LAENGE = 60;
+export const PROFILNAME_LAENGE = 60;
 
 export interface Aufzaehlung {
     id: string;
@@ -160,7 +161,7 @@ const pruefeProfil = erstellePruefer(
         type: 'object',
         required: ['name', 'raeume', 'karten', 'gesperrt'],
         properties: {
-            name: { type: 'string', minLength: 1, maxLength: 60 },
+            name: { type: 'string', minLength: 1, maxLength: PROFILNAME_LAENGE },
             raeume: {
                 type: 'array',
                 items: {
@@ -322,50 +323,88 @@ export const liegtUnter = (id: string, praefix: string): boolean => id === praef
 const betrifft = (id: string, m: Merkmale | undefined, praefixe: string[]): boolean =>
     [id, ...(m?.ziele ?? [])].some(i => praefixe.some(p => liegtUnter(i, p)));
 
-// Warum ein Datenpunkt nicht als Teil auf die Karte kommt; undefined, wenn er passt
-function teilmangel(dp: string, m: Merkmale | undefined, art: Teilart): string | undefined {
+// Warum ein Datenpunkt nicht als Teil auf die Karte kommt. Als Art, damit die Kartenseite ihn in ihrer Sprache nennt.
+export type Teilmangel =
+    | { art: 'id' }
+    | { art: 'fehlt' }
+    | { art: 'system' }
+    | { art: 'typ'; ist: string; erwartet: readonly string[] }
+    | { art: 'bereich' };
+
+// undefined, wenn er passt
+function teilmangel(dp: string, m: Merkmale | undefined, art: Teilart): Teilmangel | undefined {
     if (pruefeObjektId(dp).length > 0) {
-        return 'ID ungültig';
+        return { art: 'id' };
     }
     if (!m) {
-        return 'Datenpunkt fehlt';
+        return { art: 'fehlt' };
     }
     if (betrifft(dp, m, FEST_GESPERRT)) {
-        return 'unter system, nie freigegeben';
+        return { art: 'system' };
     }
     if (!art.typen.includes(m.type as Datentyp)) {
-        return `Typ ${String(m.type)} statt ${art.typen.join(' oder ')}`;
+        return { art: 'typ', ist: String(m.type), erwartet: art.typen };
     }
     if (art.bereich && bereich(art, m) === undefined) {
-        return 'min und max fehlen oder passen nicht';
+        return { art: 'bereich' };
     }
     return undefined;
 }
 
-/**
- * Für das Log beim Start: Was an den Karten nicht passt. Der Admin prüft beim Speichern nur den Namen, und jedes Speichern
- * startet die Instanz neu; so steht ein unpassender Datenpunkt gleich danach im Log statt still auf dem Handy zu fehlen.
- */
+function mangeltext(m: Teilmangel): string {
+    switch (m.art) {
+        case 'id':
+            return 'ID ungültig';
+        case 'fehlt':
+            return 'Datenpunkt fehlt';
+        case 'system':
+            return 'unter system, nie freigegeben';
+        case 'typ':
+            return `Typ ${m.ist} statt ${m.erwartet.join(' oder ')}`;
+        case 'bereich':
+            return 'min und max fehlen oder passen nicht';
+    }
+}
+
+export interface Kartenmaengel {
+    // Je Teil mit unpassendem Datenpunkt
+    teile: Record<string, Teilmangel>;
+    // fehlt: Die Karte erreicht kein Handy. teilweise: Ihr fehlen Teile.
+    folge?: 'fehlt' | 'teilweise';
+}
+
+export function maengelDerKarte(karte: Karte, datenpunkt: (id: string) => Merkmale | undefined): Kartenmaengel {
+    const art = KARTENARTEN[karte.typ];
+    const teile: Record<string, Teilmangel> = {};
+    for (const [teil, dp] of Object.entries(karte.teile)) {
+        const mangel = teilmangel(dp, datenpunkt(dp), art.teile[teil]);
+        if (mangel) {
+            teile[teil] = mangel;
+        }
+    }
+    const bleiben = Object.keys(karte.teile).filter(teil => !teile[teil]);
+    const folge =
+        bleiben.length === 0 || art.pflicht.some(p => !bleiben.includes(p))
+            ? 'fehlt'
+            : bleiben.length < Object.keys(karte.teile).length
+              ? 'teilweise'
+              : undefined;
+    return { teile, ...(folge ? { folge } : {}) };
+}
+
+// Für das Log beim Start: Was an den Karten nicht passt, damit ein unpassender Datenpunkt nicht still auf dem Handy fehlt.
 export function kartenmaengel(quelle: Pick<Objektquelle, 'karten' | 'datenpunkt'>): string[] {
     const maengel: string[] = [];
     for (const [id, karte] of quelle.karten()) {
-        const art = KARTENARTEN[karte.typ];
-        const teile = Object.entries(karte.teile).map(([teil, dp]) => ({
-            teil,
-            dp,
-            mangel: teilmangel(dp, quelle.datenpunkt(dp), art.teile[teil]),
-        }));
-        const schlecht = teile.filter(t => t.mangel !== undefined);
-        if (schlecht.length === 0) {
+        const { teile, folge } = maengelDerKarte(karte, dp => quelle.datenpunkt(dp));
+        if (!folge) {
             continue;
         }
-        const bleiben = teile.filter(t => t.mangel === undefined).map(t => t.teil);
-        const folge =
-            bleiben.length === 0 || art.pflicht.some(p => !bleiben.includes(p))
-                ? 'fehlt auf den Handys'
-                : 'zeigt nicht alle Teile';
-        const liste = schlecht.map(t => `${t.teil} ${t.dp}: ${t.mangel}`).join('; ');
-        maengel.push(`Karte „${karte.name}“ (${id}) ${folge}: ${liste}`);
+        const liste = Object.entries(teile)
+            .map(([teil, m]) => `${teil} ${karte.teile[teil]}: ${mangeltext(m)}`)
+            .join('; ');
+        const satz = folge === 'fehlt' ? 'fehlt auf den Handys' : 'zeigt nicht alle Teile';
+        maengel.push(`Karte „${karte.name}“ (${id}) ${satz}: ${liste}`);
     }
     return maengel;
 }
@@ -396,6 +435,20 @@ export class Rechtestand {
     }
 }
 
+// Anrufe und Benachrichtigungen der Apps gibt nur eine Einzelfreigabe frei: Ein Raum ist dafür zu grob.
+export const istPersoenlich = (karte: Karte, quelle: Pick<Objektquelle, 'eigeneApps' | 'datenpunkt'>): boolean =>
+    Object.values(karte.teile).some(dp => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]));
+
+// Was eine App mit diesem Profil sieht: je Karte schreiben, wenn sie ein bedienbares Teil hat, sonst lesen
+export function sicht(profil: Profil, quelle: Objektquelle): Record<string, Recht> {
+    return Object.fromEntries(
+        berechneRechte(profil, quelle).inhalt.karten.map(k => [
+            k.id,
+            Object.values(k.teile).some(t => t.recht === 'schreiben') ? 'schreiben' : 'lesen',
+        ]),
+    );
+}
+
 // Ohne Profil sieht eine App nichts.
 export function rechteFuer(profilId: string, quelle: Objektquelle): Rechtestand {
     const profil = istKennung(profilId) ? quelle.profil(profilId) : undefined;
@@ -419,11 +472,7 @@ export function berechneRechte(profil: Profil, quelle: Objektquelle): Rechtestan
             continue;
         }
         const raum = raeume.has(karte.raum) ? karte.raum : undefined;
-        // Anrufe und Benachrichtigungen der Apps nur über Einzelfreigaben: Ein Raum ist dafür zu grob.
-        const persoenlich = Object.values(karte.teile).some(dp =>
-            betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]),
-        );
-        const recht = einzeln.get(id) ?? (raum && !persoenlich ? raumrecht.get(raum) : undefined);
+        const recht = einzeln.get(id) ?? (raum && !istPersoenlich(karte, quelle) ? raumrecht.get(raum) : undefined);
         const eintrag = recht && kartenEintrag(id, karte, recht, raum, quelle);
         if (eintrag) {
             karten.push(eintrag);
