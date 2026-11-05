@@ -167,8 +167,6 @@ export class Werteversand implements Empfaenger {
     private rechte_: Rechtestand;
     private ids: ReadonlySet<string> = new Set();
     private readonly offen = new Map<string, Zustand | null>();
-    // Zeitstempel des zuletzt gesendeten Werts je ID, damit ein verspätetes Ereignis keinen neueren Wert überschreibt
-    private readonly gesendet = new Map<string, number>();
     private sammeln?: NodeJS.Timeout;
     private reihe: Promise<void> = Promise.resolve();
     private wartendesAbo?: { ids: string[]; fertig: Promise<void> };
@@ -247,12 +245,10 @@ export class Werteversand implements Empfaenger {
         if (this.beendet || !this.erlaubt(id)) {
             return;
         }
-        const zustand = alsZustand(state);
-        const zuletzt = this.gesendet.get(id);
-        if (zustand && zuletzt !== undefined && zustand.ts < zuletzt) {
-            return;
-        }
-        this.offen.set(id, zustand);
+        // Die zuletzt gemeldete Änderung gilt, ohne Vergleich der Zeitstempel: ioBroker meldet in Reihenfolge, ts dagegen
+        // darf der Schreiber setzen, etwa ein Geräteadapter mit der Zeit seines Gateways. Eine Bestätigung mit älterem ts
+        // fiele sonst weg, und die App zeigte bis zur nächsten Änderung den falschen Stand.
+        this.offen.set(id, alsZustand(state));
         // In der Reihe mit dem Abo: Sonst überholte eine Änderung die werte, deren Lesen vorher begonnen hat.
         this.sammeln ??= setTimeout(() => {
             this.nacheinander(() => this.versende()).catch((fehler: Error) =>
@@ -282,10 +278,9 @@ export class Werteversand implements Empfaenger {
     private async ersetze(neu: ReadonlySet<string>): Promise<void> {
         const alt = this.ids;
         this.ids = neu;
-        for (const id of [...this.offen.keys(), ...this.gesendet.keys()]) {
+        for (const id of this.offen.keys()) {
             if (!neu.has(id)) {
                 this.offen.delete(id);
-                this.gesendet.delete(id);
             }
         }
         await this.o.stelle.ersetze(this, alt, neu);
@@ -303,19 +298,13 @@ export class Werteversand implements Empfaenger {
         }
         const neu = new Set(ids.filter(id => this.rechte_.recht(id)));
         await this.ersetze(neu);
-        // Erst abonnieren, dann lesen: Eine Änderung dazwischen kommt so als aenderung nach, statt verloren zu gehen.
+        // Erst abonnieren, dann lesen: Eine Änderung dazwischen kommt so als aenderung nach, statt verloren zu gehen. Sie
+        // bleibt auch, wenn sie älter sein könnte als das Gelesene; dann folgt die neuere ebenfalls als aenderung.
         const states = await this.o.quelle.lies([...neu]);
-        const werte: [string, Zustand | null][] = [];
         // Die Rechte können sich während des Lesens geändert haben.
-        for (const id of [...neu].filter(i => this.erlaubt(i))) {
-            const zustand = alsZustand(states[id]);
-            werte.push([id, zustand]);
-            this.gesendet.set(id, zustand?.ts ?? 0);
-            const wartend = this.offen.get(id);
-            if (wartend && zustand && wartend.ts <= zustand.ts) {
-                this.offen.delete(id);
-            }
-        }
+        const werte = [...neu]
+            .filter(i => this.erlaubt(i))
+            .map((id): [string, Zustand | null] => [id, alsZustand(states[id])]);
         await this.sendeInTeilen('werte', werte);
     }
 
@@ -325,13 +314,6 @@ export class Werteversand implements Empfaenger {
         this.offen.clear();
         if (werte.length === 0 || this.beendet) {
             return;
-        }
-        for (const [id, zustand] of werte) {
-            if (zustand) {
-                this.gesendet.set(id, zustand.ts);
-            } else {
-                this.gesendet.delete(id);
-            }
         }
         await this.sendeInTeilen('aenderung', werte);
     }

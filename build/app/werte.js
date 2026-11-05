@@ -150,8 +150,6 @@ class Werteversand {
   rechte_;
   ids = /* @__PURE__ */ new Set();
   offen = /* @__PURE__ */ new Map();
-  // Zeitstempel des zuletzt gesendeten Werts je ID, damit ein verspätetes Ereignis keinen neueren Wert überschreibt
-  gesendet = /* @__PURE__ */ new Map();
   sammeln;
   reihe = Promise.resolve();
   wartendesAbo;
@@ -220,12 +218,7 @@ class Werteversand {
     if (this.beendet || !this.erlaubt(id)) {
       return;
     }
-    const zustand = alsZustand(state);
-    const zuletzt = this.gesendet.get(id);
-    if (zustand && zuletzt !== void 0 && zustand.ts < zuletzt) {
-      return;
-    }
-    this.offen.set(id, zustand);
+    this.offen.set(id, alsZustand(state));
     (_a = this.sammeln) != null ? _a : this.sammeln = setTimeout(() => {
       this.nacheinander(() => this.versende()).catch(
         (fehler) => this.o.log.error(`App ${this.o.appId}, aenderung: ${fehler.message}`)
@@ -250,16 +243,14 @@ class Werteversand {
   async ersetze(neu) {
     const alt = this.ids;
     this.ids = neu;
-    for (const id of [...this.offen.keys(), ...this.gesendet.keys()]) {
+    for (const id of this.offen.keys()) {
       if (!neu.has(id)) {
         this.offen.delete(id);
-        this.gesendet.delete(id);
       }
     }
     await this.o.stelle.ersetze(this, alt, neu);
   }
   async ersetzeAbo(ids) {
-    var _a;
     if (this.beendet) {
       return;
     }
@@ -272,16 +263,7 @@ class Werteversand {
     const neu = new Set(ids.filter((id) => this.rechte_.recht(id)));
     await this.ersetze(neu);
     const states = await this.o.quelle.lies([...neu]);
-    const werte = [];
-    for (const id of [...neu].filter((i) => this.erlaubt(i))) {
-      const zustand = alsZustand(states[id]);
-      werte.push([id, zustand]);
-      this.gesendet.set(id, (_a = zustand == null ? void 0 : zustand.ts) != null ? _a : 0);
-      const wartend = this.offen.get(id);
-      if (wartend && zustand && wartend.ts <= zustand.ts) {
-        this.offen.delete(id);
-      }
-    }
+    const werte = [...neu].filter((i) => this.erlaubt(i)).map((id) => [id, alsZustand(states[id])]);
     await this.sendeInTeilen("werte", werte);
   }
   async versende() {
@@ -290,13 +272,6 @@ class Werteversand {
     this.offen.clear();
     if (werte.length === 0 || this.beendet) {
       return;
-    }
-    for (const [id, zustand] of werte) {
-      if (zustand) {
-        this.gesendet.set(id, zustand.ts);
-      } else {
-        this.gesendet.delete(id);
-      }
     }
     await this.sendeInTeilen("aenderung", werte);
   }

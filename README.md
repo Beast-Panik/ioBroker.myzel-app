@@ -94,6 +94,10 @@ Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
 
+### 0.2.2
+
+Fehler behoben: Nach schnellem Schalten blieb in der App der falsche Stand stehen, wenn der Geräteadapter mit einem älteren Zeitstempel bestätigte, etwa der Zeit seines Gateways. Der Adapter verwarf solche Änderungen. Jetzt gilt immer die zuletzt gemeldete Änderung; ioBroker meldet in Reihenfolge
+
 ### 0.2.1
 
 Karten im Reiter „Karten“ nach Räumen geordnet wie in der App, Karten ohne Raum zuletzt, im Raum nach Namen. Der Adapter ordnet beim Start und schreibt nur, wenn sich die Reihenfolge geändert hat; dann startet die Instanz einmal mehr neu

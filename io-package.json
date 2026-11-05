@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.2.1",
+        "version": "0.2.2",
         "news": {
+            "0.2.2": {
+                "en": "Fix: after switching quickly, the app could keep showing the wrong state when a device adapter confirmed with an older timestamp; the last reported change now always counts",
+                "de": "Fehler behoben: Nach schnellem Schalten konnte die App den falschen Stand behalten, wenn ein Geräteadapter mit älterem Zeitstempel bestätigte; jetzt gilt immer die zuletzt gemeldete Änderung"
+            },
             "0.2.1": {
                 "en": "Cards in the instance settings are sorted by room like in the app, cards without a room last",
                 "de": "Karten in den Instanzeinstellungen nach Räumen geordnet wie in der App, Karten ohne Raum zuletzt"

@@ -216,6 +216,22 @@ describe('Werteversand', () => {
         ]);
     });
 
+    it('eine Änderung während des Lesens mit älterem ts geht nicht verloren, sie kommt nach den werte', async () => {
+        const quelle = new Speicherquelle().datenpunkt('a.b', {}, false);
+        const { werte, gesendet } = versand(quelle, rechteFuer(['a.b']));
+        const halt = halteLesen(quelle);
+        const abo = werte.abo(['a.b']);
+        await naechsterTakt();
+        werte.geaendert('a.b', { val: true, ack: true, ts: 1, lc: 0, from: 'x' });
+        halt.lesen();
+        await abo;
+        await new Promise(r => setTimeout(r, 150));
+        expect(gesendet.map(n => [n.t, n.werte['a.b'].val])).to.deep.equal([
+            ['werte', false],
+            ['aenderung', true],
+        ]);
+    });
+
     it('große werte und aenderung gehen in Teilen hinaus', async () => {
         const quelle = new Speicherquelle()
             .datenpunkt('a.b', {}, 'x'.repeat(150))

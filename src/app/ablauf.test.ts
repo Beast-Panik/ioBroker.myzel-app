@@ -584,13 +584,25 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         g.schliesse();
     });
 
-    it('ein verspätetes älteres Ereignis überschreibt keinen neueren Wert', async () => {
+    // Am echten ioBroker gefunden: Schnell an und aus, das Gerät bestätigte „aus“ mit der Zeit seines Gateways, etwas
+    // älter als der zuletzt gesendete Befehl. Die App zeigte danach dauerhaft „an“.
+    it('eine Bestätigung mit älterem Zeitstempel kommt trotzdem an; es gilt die zuletzt gemeldete Änderung', async () => {
         const { g } = await kopple();
-        g.sende({ t: 'abo', ids: ['zigbee.0.lampe.helligkeit'] });
+        g.sende({ t: 'abo', ids: ['zigbee.0.lampe.state'] });
         await g.naechste();
-        u.quelle.extern('zigbee.0.lampe.helligkeit', 10, true, 1793719000000);
-        await pause(150);
-        expect(await g.alle()).to.deep.equal([]);
+        g.sende({ t: 'setze', n: 1, id: 'zigbee.0.lampe.state', val: false });
+        await g.naechste();
+        const befehl = await g.naechste();
+        expect(befehl.werte['zigbee.0.lampe.state']).to.include({ val: false, ack: false });
+        const ts = befehl.werte['zigbee.0.lampe.state'].ts as number;
+        u.quelle.extern('zigbee.0.lampe.state', false, true, ts - 500);
+        expect((await g.naechste()).werte['zigbee.0.lampe.state']).to.deep.equal({
+            val: false,
+            ack: true,
+            ts: ts - 500,
+        });
+        u.quelle.extern('zigbee.0.lampe.state', true, true, ts - 1000);
+        expect((await g.naechste()).werte['zigbee.0.lampe.state']).to.include({ val: true, ack: true });
         g.schliesse();
     });
 
