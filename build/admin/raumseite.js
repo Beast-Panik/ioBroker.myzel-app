@@ -136,18 +136,17 @@ class Raumseite {
     for (const [, k] of katalog.karten()) {
       karten.set(k.raum, ((_a = karten.get(k.raum)) != null ? _a : 0) + 1);
     }
-    const raeume = katalog.raeume();
     return {
       sprache,
-      raeume: raeume.map((r) => {
+      raeume: (0, import_eintraege.raeumeFuerSeiten)(katalog).map((r) => {
         var _a2;
-        return { id: r.id, name: (0, import_rechte.text)(r.name, sprache, r.id), karten: (_a2 = karten.get(r.id)) != null ? _a2 : 0 };
+        return { ...r, karten: (_a2 = karten.get(r.id)) != null ? _a2 : 0 };
       }),
       etagen: katalog.alleEtagen().map(([id, e]) => ({
         id,
         name: e.name,
         kurz: e.kurz,
-        raeume: raeume.filter((r) => r.etage === id).map((r) => r.id)
+        raeume: katalog.raeume().filter((r) => r.etage === id).map((r) => r.id)
       })),
       laengen: { name: import_rechte.ETAGENNAME_LAENGE, kurz: import_rechte.ETAGENKURZ_LAENGE },
       hoechstens: import_rechte.ETAGEN_HOECHSTENS

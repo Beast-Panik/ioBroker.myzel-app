@@ -41,6 +41,7 @@ var import_app_an_adapter_schema = __toESM(require("../../protokoll/v1/app-an-ad
 var import_gemeinsam_schema = __toESM(require("../../protokoll/v1/gemeinsam.schema.json"));
 var import_grenzen = require("../basis/grenzen");
 var import_kern = require("../basis/kern");
+var import_fernschluessel = require("../basis/fernschluessel");
 var import_kodierung = require("../basis/kodierung");
 var import_schema = require("../basis/schema");
 var import_handydaten = require("./handydaten");
@@ -77,6 +78,14 @@ class Dienst {
   vorgemerkt;
   neuberechnung = Promise.resolve();
   beendet = false;
+  // Adresse oder Geheimnis des Fernzugangs neu: Jede App bekommt den neuen Stand wie bei neuen Rechten.
+  fernzugangGeaendert() {
+    this.vormerken();
+  }
+  // Weg je angemeldeter App
+  verbindungen() {
+    return new Map([...this.sitzungen].map(([appId, a]) => [appId, a.sitzung.verbindung.herkunft.weg]));
+  }
   geaendert(id, state) {
     this.abostelle.geaendert(id, state);
     const hinweisFuer = state && !state.ack ? (0, import_objekte.appIdAus)(this.o.namespace, id, "hinweis.senden") : void 0;
@@ -214,7 +223,8 @@ class Dienst {
       grenzen: this.o.grenzen
     });
     const alt = this.sitzungen.get(appId);
-    this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version });
+    const fern = this.fernFuer(appId, daten, version);
+    this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version, fern });
     if (alt) {
       this.o.log.info(`App ${appId}: neue Verbindung ersetzt die bisherige`);
       alt.sitzung.verbindung.schliesse(import_kern.SCHLIESSCODE.ersetzt, "ersetzt");
@@ -234,7 +244,8 @@ class Dienst {
       adapter: this.o.adapterId,
       adressen,
       ...(0, import_rechte.inhaltFuer)(rechte.inhalt, version),
-      handydaten: daten.handydaten
+      handydaten: daten.handydaten,
+      ...fern && { fern }
     });
     this.o.log.info(`App ${appId} verbunden \xFCber ${v.herkunft.weg} von ${v.herkunft.adresse}`);
     await this.o.ablage.schreibe(appId, { online: true, weg: v.herkunft.weg });
@@ -266,20 +277,42 @@ class Dienst {
         sitzung.verbindung.schliesse(import_kern.SCHLIESSCODE.entfernt, "entfernt");
         continue;
       }
+      const fern = this.fernFuer(appId, daten, angemeldet.version);
+      if (sitzung.verbindung.herkunft.weg === "fern" && !fern) {
+        this.o.log.info(`App ${appId}: Fernzugang ausgeschaltet, Verbindung \xFCber den Vermittler beendet`);
+        sitzung.verbindung.schliesse(import_kern.SCHLIESSCODE.fernAus, "Fernzugang aus");
+        continue;
+      }
       const rechte = (_a = jeProfil.get(daten.profil)) != null ? _a : (0, import_rechte.rechteFuer)(daten.profil, this.o.katalog);
       jeProfil.set(daten.profil, rechte);
       const fuerApp = (0, import_rechte.inhaltFuer)(rechte.inhalt, angemeldet.version);
       const rechteNeu = !(0, import_node_util.isDeepStrictEqual)(fuerApp, (0, import_rechte.inhaltFuer)(werte.rechte.inhalt, angemeldet.version));
-      if (!rechteNeu && (0, import_node_util.isDeepStrictEqual)(daten.handydaten, handy.handydaten)) {
+      const fernNeu = !(0, import_node_util.isDeepStrictEqual)(fern, angemeldet.fern);
+      if (!rechteNeu && !fernNeu && (0, import_node_util.isDeepStrictEqual)(daten.handydaten, handy.handydaten)) {
         continue;
       }
       if (rechteNeu) {
         werte.neueRechte(rechte).catch((fehler) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
       }
       handy.handydaten = daten.handydaten;
-      sitzung.verbindung.sende({ t: "rechte", ...fuerApp, handydaten: daten.handydaten });
+      angemeldet.fern = fern;
+      sitzung.verbindung.sende({ t: "rechte", ...fuerApp, handydaten: daten.handydaten, ...fern && { fern } });
       this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
     }
+  }
+  fernFuer(appId, daten, version) {
+    var _a, _b, _c;
+    const zugang = (_b = (_a = this.o).fernzugang) == null ? void 0 : _b.call(_a);
+    if (version < import_rechte.FERN_SEIT || !zugang || daten.fern !== true) {
+      return void 0;
+    }
+    const grenzen = (_c = this.o.grenzen) != null ? _c : import_grenzen.GRENZEN;
+    return {
+      adresse: zugang.adresse,
+      schluessel: (0, import_fernschluessel.appSchluessel)(zugang.geheimnis, appId, daten.zugangHash),
+      pingS: grenzen.fernPingMs / 1e3,
+      totS: grenzen.fernTotMs / 1e3
+    };
   }
   getrennt(sitzung) {
     var _a;

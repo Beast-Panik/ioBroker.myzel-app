@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+        />
+        <title>Fernzugang</title>
+        <link
+            rel="stylesheet"
+            href="seite.css"
+        />
+        <!-- Verbindung zu ioBroker, wie sie der Admin selbst ausliefert -->
+        <script src="../../lib/js/socket.io.js"></script>
+        <script
+            type="module"
+            src="fern.js"
+        ></script>
+    </head>
+    <body>
+        <header class="kopf">
+            <p
+                class="hinweis"
+                id="hinweis"
+            ></p>
+        </header>
+        <p
+            class="meldung"
+            id="meldung"
+            role="status"
+        ></p>
+
+        <section class="raum">
+            <h2 id="vermittlerTitel"></h2>
+            <form
+                class="zeile adresszeile"
+                id="adressformular"
+                novalidate
+            >
+                <label class="feld">
+                    <span id="adresseLabel"></span>
+                    <input
+                        type="url"
+                        id="adresse"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="https://vermittler.example.org"
+                    />
+                </label>
+                <button
+                    type="submit"
+                    class="knopf haupt"
+                    id="adresseSpeichern"
+                    disabled
+                ></button>
+            </form>
+            <p
+                class="stand"
+                id="stand"
+            ></p>
+        </section>
+
+        <section
+            class="raum"
+            id="einrichtung"
+        >
+            <h2 id="einrichtungTitel"></h2>
+            <p
+                class="erklaerung"
+                id="einrichtungHinweis"
+            ></p>
+            <div class="konfigzeile">
+                <code id="zeile"></code>
+                <button
+                    type="button"
+                    class="knopf"
+                    id="kopieren"
+                    disabled
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                    >
+                        <rect
+                            x="9"
+                            y="9"
+                            width="11"
+                            height="11"
+                            rx="2"
+                        />
+                        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                    </svg>
+                    <span id="kopierenText"></span>
+                </button>
+            </div>
+        </section>
+
+        <section class="raum">
+            <h2 id="appsTitel"></h2>
+            <p
+                class="erklaerung"
+                id="appsHinweis"
+            ></p>
+            <div
+                class="wahlliste fernapps"
+                id="apps"
+            ></div>
+        </section>
+
+        <section class="raum">
+            <h2 id="schluesselTitel"></h2>
+            <p
+                class="erklaerung"
+                id="schluesselHinweis"
+            ></p>
+            <p id="schluesselknopf">
+                <button
+                    type="button"
+                    class="knopf gefahr"
+                    id="neuerSchluessel"
+                    disabled
+                ></button>
+            </p>
+            <div
+                class="fuss frage"
+                id="schluesselfrage"
+                hidden
+            >
+                <span id="schluesselfrageText"></span>
+                <span class="platz"></span>
+                <button
+                    type="button"
+                    class="knopf"
+                    id="nichtErzeugen"
+                ></button>
+                <button
+                    type="button"
+                    class="knopf gefahr voll"
+                    id="wirklichErzeugen"
+                ></button>
+            </div>
+        </section>
+    </body>
+</html>

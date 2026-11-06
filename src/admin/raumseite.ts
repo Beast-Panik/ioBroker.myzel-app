@@ -7,10 +7,9 @@ import {
     type Etage,
     alsEtage,
     istKennung,
-    text,
 } from '../app/rechte';
 import type { Protokoll } from '../basis/grenzen';
-import { type Ablehnung, Eintraege, nachricht, seitenadresse } from './eintraege';
+import { type Ablehnung, Eintraege, nachricht, raeumeFuerSeiten, seitenadresse } from './eintraege';
 
 // Über sendTo von der Raumseite (admin/raeume.html), eingebettet im Reiter „Räume“ der Instanzeinstellungen
 export const RAUMBEFEHLE: readonly string[] = [
@@ -150,15 +149,17 @@ export class Raumseite {
         for (const [, k] of katalog.karten()) {
             karten.set(k.raum, (karten.get(k.raum) ?? 0) + 1);
         }
-        const raeume = katalog.raeume();
         return {
             sprache,
-            raeume: raeume.map(r => ({ id: r.id, name: text(r.name, sprache, r.id), karten: karten.get(r.id) ?? 0 })),
+            raeume: raeumeFuerSeiten(katalog).map(r => ({ ...r, karten: karten.get(r.id) ?? 0 })),
             etagen: katalog.alleEtagen().map(([id, e]) => ({
                 id,
                 name: e.name,
                 kurz: e.kurz,
-                raeume: raeume.filter(r => r.etage === id).map(r => r.id),
+                raeume: katalog
+                    .raeume()
+                    .filter(r => r.etage === id)
+                    .map(r => r.id),
             })),
             laengen: { name: ETAGENNAME_LAENGE, kurz: ETAGENKURZ_LAENGE },
             hoechstens: ETAGEN_HOECHSTENS,

@@ -2,11 +2,13 @@ import * as utils from '@iobroker/adapter-core';
 import gemeinsam from '../protokoll/v1/gemeinsam.schema.json';
 import { type Betrieb, Geraete, Verwaltung, adminOffen } from './admin/geraete';
 import type { Ablehnung } from './admin/eintraege';
+import { FERNBEFEHLE, type Fernbetrieb, Fernseite } from './admin/fernseite';
 import { KARTENBEFEHLE, Kartenseite } from './admin/kartenseite';
 import { PROFILBEFEHLE, Profilseite } from './admin/profilseite';
 import { RAUMBEFEHLE, Raumseite } from './admin/raumseite';
+import type { Ferneinstellung } from './app/fernzugang';
 import { Katalog } from './app/katalog';
-import { IoBrokerAblage, IoBrokerQuelle } from './app/objekte';
+import { IoBrokerAblage, IoBrokerQuelle, appIdAus } from './app/objekte';
 import { kartenmaengel } from './app/rechte';
 import { stelleUm } from './app/umstellung';
 import { type Server, starteServer } from './app/server';
@@ -17,13 +19,14 @@ import { pruefeEinstellungen } from './einstellungen';
 import { automatischeAdressen } from './zugang/heimnetz';
 
 const IDENTITAET = 'identitaet';
+const FERNZUGANG = 'fernzugang';
 const pruefeAdapterId = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/adapterId` }, [gemeinsam]);
 
 class MyzelApp extends utils.Adapter {
     private server?: Server;
     private katalog?: Katalog;
     private betrieb?: Betrieb;
-    private seiten: [readonly string[], Kartenseite | Profilseite | Raumseite][] = [];
+    private seiten: [readonly string[], { beantworte(befehl: string, roh: unknown): Promise<unknown> }][] = [];
     private beendet = false;
 
     public constructor(options: Partial<utils.AdapterOptions> = {}) {
@@ -33,7 +36,12 @@ class MyzelApp extends utils.Adapter {
         });
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', (id, state) => this.server?.geaendert(id, state));
-        this.on('objectChange', (id, objekt) => this.katalog?.geaendert(id, objekt));
+        this.on('objectChange', (id, objekt) => {
+            this.katalog?.geaendert(id, objekt);
+            if (appIdAus(this.namespace, id)) {
+                this.server?.fern?.appsGeaendert();
+            }
+        });
         this.on('message', obj => void this.beantworte(obj));
         this.on('unload', this.onUnload.bind(this));
     }
@@ -56,6 +64,7 @@ class MyzelApp extends utils.Adapter {
             [KARTENBEFEHLE, new Kartenseite(seite)],
             [PROFILBEFEHLE, new Profilseite(seite)],
             [RAUMBEFEHLE, new Raumseite(seite)],
+            [FERNBEFEHLE, new Fernseite({ namespace: this.namespace, betrieb: () => this.fernbetrieb() })],
         ];
         try {
             await this.starte();
@@ -66,6 +75,7 @@ class MyzelApp extends utils.Adapter {
 
     private async starte(): Promise<void> {
         await this.setStateAsync('info.connection', false, true);
+        await this.setStateAsync('info.fernzugang', false, true);
 
         const fehler = pruefeEinstellungen(this.config);
         if (fehler.length > 0) {
@@ -111,6 +121,8 @@ class MyzelApp extends utils.Adapter {
             nachlaufMs: this.config.nachlaufMin * 60_000,
             textLaenge: this.config.textLaenge,
             hinweisFristMs: this.config.hinweisFristMin * 60_000,
+            fernablage: { lies: () => this.liesFernzugang(), schreibe: e => this.schreibeFernzugang(e) },
+            fernVerbunden: ja => void this.setStateAsync('info.fernzugang', ja, true),
         });
         if (this.beendet) {
             await server.beende();
@@ -149,6 +161,15 @@ class MyzelApp extends utils.Adapter {
             antwort = { fehler: 'gescheitert', einzelheiten: [(fehler as Error).message] } satisfies Ablehnung;
         }
         this.sendTo(obj.from, obj.command, antwort ?? null, obj.callback);
+    }
+
+    private fernbetrieb(): Fernbetrieb | undefined {
+        const fern = this.server?.fern;
+        const b = this.betrieb;
+        const katalog = this.katalog;
+        return fern && b && katalog
+            ? { fern, ablage: b.ablage, verbindungen: () => b.dienst.verbindungen(), sprache: katalog.sprache }
+            : undefined;
     }
 
     private async adminOhneAnmeldung(): Promise<string[]> {
@@ -197,10 +218,33 @@ class MyzelApp extends utils.Adapter {
         return gespeichert;
     }
 
+    // Eigenes Objekt wie identitaet, aus demselben Grund. Ein unbrauchbares Geheimnis gilt als fehlend und wird neu erzeugt.
+    private async liesFernzugang(): Promise<Ferneinstellung | undefined> {
+        const n = (await this.getObjectAsync(FERNZUGANG))?.native as Record<string, unknown> | undefined;
+        if (typeof n?.adresse !== 'string' || typeof n.geheimnis !== 'string') {
+            return undefined;
+        }
+        const geheimnis = this.decrypt(n.geheimnis);
+        if (!/^[A-Za-z0-9_-]{43}$/.test(geheimnis)) {
+            this.log.warn(`Geheimnis in ${this.namespace}.${FERNZUGANG} unbrauchbar, wird neu erzeugt`);
+            return undefined;
+        }
+        return { adresse: n.adresse, geheimnis };
+    }
+
+    private async schreibeFernzugang(e: Ferneinstellung): Promise<void> {
+        await this.setObjectAsync(FERNZUGANG, {
+            type: 'config',
+            common: { name: { de: 'Fernzugang über den Vermittler', en: 'Remote access via relay' } },
+            native: { adresse: e.adresse, geheimnis: this.encrypt(e.geheimnis) },
+        });
+    }
+
     private onUnload(callback: () => void): void {
         try {
             this.beendet = true;
             void this.setState('info.connection', false, true);
+            void this.setState('info.fernzugang', false, true);
             (this.server?.beende() ?? Promise.resolve())
                 .catch((fehler: Error) => this.log.error(`Fehler beim Beenden: ${fehler.message}`))
                 .finally(callback);

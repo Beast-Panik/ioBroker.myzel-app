@@ -1,8 +1,16 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.7.0",
+        "version": "0.8.0",
         "news": {
+            "0.8.0": {
+                "en": "Remote access through your own relay: the adapter dials out to the relay itself, no port opens at home, and TLS runs from the app into the adapter. New tab \"Remote access\" with the relay address, connection status, the line for the relay's .env, enabling per app (off by default) and a new key after confirmation. Apps from protocol 6 get the access when they connect at home; switching it off ends a session through the relay at once. Via the relay apps.<id>.weg is \"fern\", present stays home network only. Needs Myzel Home 0.7.0 or newer",
+                "de": "Fernzugang über einen eigenen Vermittler: Der Adapter wählt sich selbst beim Vermittler ein, zu Hause öffnet sich kein Port, und TLS geht von der App bis in den Adapter. Neuer Reiter „Fernzugang“ mit Adresse des Vermittlers, Stand der Verbindung, der Zeile für die .env des Vermittlers, Freigabe je App (Vorgabe aus) und neuem Schlüssel nach Rückfrage. Apps ab Protokoll 6 bekommen den Zugang beim Verbinden im Heimnetz; Ausschalten beendet eine Sitzung über den Vermittler sofort. Über den Vermittler steht apps.<id>.weg auf „fern“, anwesend gilt weiter nur im Heimnetz. Braucht Myzel Home ab 0.7.0"
+            },
+            "0.7.1": {
+                "en": "Rooms with the same name, such as a room supplied by ioBroker and one created later by hand or by an adapter, show their ID behind the name in the Cards, Rooms and Profiles tabs, so they can be told apart. Card suggestions also combine parts of one device by its ID, never two devices; settings of a device that look like a switch, such as the colour options of a Zigbee lamp, are no longer suggested as a switch",
+                "de": "Räume mit gleichem Namen, etwa ein mitgelieferter Raum von ioBroker und einer, der später von Hand oder von einem Adapter dazukam, zeigen in den Reitern Karten, Räume und Profile ihre ID hinter dem Namen und lassen sich so unterscheiden. Kartenvorschläge fassen auch Teile eines Geräts über seine ID zusammen, nie zwei Geräte; Einstellungen eines Geräts, die wie ein Schalter aussehen, etwa die Farboptionen einer Zigbee-Lampe, kommen nicht mehr als Schalter"
+            },
             "0.7.0": {
                 "en": "Card suggestions combine parts with the same name from one instance, such as on, brightness and colour of a lamp that ioBroker does not know as one device; a switch with the name of a lamp becomes its on/off, a temperature sensor with the name of a thermostat its actual temperature. Parts in different rooms or overlapping parts stay apart. Each suggestion has a room selection; a changed room is taken over into ioBroker when the card is created",
                 "de": "Kartenvorschläge fassen Teile mit gleichem Namen aus einer Instanz zusammen, etwa An, Helligkeit und Farbe einer Lampe, die ioBroker nicht als ein Gerät kennt; ein Schalter mit dem Namen einer Lampe wird ihr An, ein Temperaturfühler mit dem Namen eines Thermostats seine Isttemperatur. Teile in verschiedenen Räumen oder doppelte Teile bleiben getrennt. Jeder Vorschlag hat eine Raumauswahl; ein geänderter Raum wird beim Anlegen in ioBroker übernommen"
@@ -139,6 +147,22 @@
                     "en": "Information",
                     "de": "Information"
                 }
+            },
+            "native": {}
+        },
+        {
+            "_id": "info.fernzugang",
+            "type": "state",
+            "common": {
+                "role": "indicator.connected",
+                "name": {
+                    "en": "Connected to the relay for remote access",
+                    "de": "Mit dem Vermittler für den Fernzugang verbunden"
+                },
+                "type": "boolean",
+                "read": true,
+                "write": false,
+                "def": false
             },
             "native": {}
         },

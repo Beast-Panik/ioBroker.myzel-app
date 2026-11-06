@@ -22,7 +22,7 @@ export default [
         ],
     },
     {
-        // Karten- und Profilseite laufen im Browser des Admins; io kommt aus dessen lib/js/socket.io.js.
+        // Die Seiten der Reiter laufen im Browser des Admins; io kommt aus dessen lib/js/socket.io.js.
         files: ['admin/**/*.js'],
         languageOptions: {
             sourceType: 'module',
@@ -33,6 +33,8 @@ export default [
                 navigator: 'readonly',
                 matchMedia: 'readonly',
                 getComputedStyle: 'readonly',
+                getSelection: 'readonly',
+                CSS: 'readonly',
                 setTimeout: 'readonly',
                 clearTimeout: 'readonly',
                 URLSearchParams: 'readonly',

@@ -71,6 +71,24 @@
                 }
             }
         },
+        "_reiterFern": {
+            "type": "panel",
+            "label": "Remote access",
+            "items": {
+                "_fernAus": {
+                    "type": "staticText",
+                    "text": "Remote access page offline",
+                    "hidden": "_alive",
+                    "xs": 12
+                },
+                "_fernseite": {
+                    "type": "iframeSendTo",
+                    "command": "fernseite",
+                    "xs": 12,
+                    "style": { "height": "calc(100vh - 220px)", "minHeight": "420px" }
+                }
+            }
+        },
         "_reiterEinstellungen": {
             "type": "panel",
             "label": "Settings",

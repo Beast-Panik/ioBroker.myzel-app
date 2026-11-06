@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myzel.local/protokoll/app/v1/adapter-an-app.schema.json",
-  "title": "Nachrichten vom Adapter an die App, Protokoll Version 3 bis 5",
+  "title": "Nachrichten vom Adapter an die App, Protokoll Version 3 bis 6",
   "description": "Die App prüft streng und trennt bei Verstoß. Neue Felder kommen nur mit einer neuen Protokollversion.",
   "oneOf": [
     { "$ref": "#/$defs/willkommen" },
@@ -220,6 +220,18 @@
             "akku": { "type": "boolean" },
             "anruf": { "type": "boolean" },
             "benachrichtigung": { "type": "boolean" }
+          }
+        },
+        "fern": {
+          "description": "Ab Protokollversion 6, nur für Apps mit Fernzugang: Vermittler, Schlüssel der App dort und die Lebenszeichen auf diesem Weg (Ping des Adapters alle pingS Sekunden, tot nach totS ohne Ping). Fehlt es, löscht die App, was sie dazu gespeichert hat",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adresse", "schluessel", "pingS", "totS"],
+          "properties": {
+            "adresse": { "$ref": "gemeinsam.schema.json#/$defs/vermittler" },
+            "schluessel": { "$ref": "gemeinsam.schema.json#/$defs/vermittlerschluessel" },
+            "pingS": { "type": "integer", "minimum": 15, "maximum": 3600 },
+            "totS": { "type": "integer", "minimum": 45, "maximum": 7200 }
           }
         }
       }

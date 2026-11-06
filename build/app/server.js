@@ -27,10 +27,12 @@ var import_kopplung = require("../basis/kopplung");
 var import_schutz = require("../basis/schutz");
 var import_heimnetz = require("../zugang/heimnetz");
 var import_dienst = require("./dienst");
+var import_fernzugang = require("./fernzugang");
 async function starteServer(o) {
   const pruefer = (0, import_dienst.appPruefer)(o.versionen);
   const sperrliste = new import_schutz.Sperrliste(o.grenzen);
   const kopplung = new import_kopplung.Kopplung(o.grenzen);
+  let fern;
   const fehlversuch = (adresse) => {
     if (sperrliste.fehlversuch(adresse, Date.now())) {
       o.log.warn(`Adresse ${(0, import_schutz.sperrbereich)(adresse)} nach wiederholten Fehlversuchen gesperrt`);
@@ -50,7 +52,8 @@ async function starteServer(o) {
     textLaenge: o.textLaenge,
     hinweisFristMs: o.hinweisFristMs,
     grenzen: o.grenzen,
-    neuberechnungMs: o.neuberechnungMs
+    neuberechnungMs: o.neuberechnungMs,
+    fernzugang: () => fern == null ? void 0 : fern.zugang()
   });
   await dienst.starte();
   const anmeldung = new import_anmeldung.Anmeldung({ pruefer, kopplung, fehlversuch, ziel: dienst, log: o.log });
@@ -69,15 +72,32 @@ async function starteServer(o) {
     zustand: o.zustand
   });
   heimnetz.starte();
+  if (o.fernablage) {
+    fern = new import_fernzugang.Fernverwaltung({
+      adapterId: o.adapterId,
+      ablage: o.fernablage,
+      apps: o.ablage,
+      nimm: (strom, herkunft) => kern.nimm(strom, herkunft),
+      log: o.log,
+      verbunden: (ja) => {
+        var _a;
+        return (_a = o.fernVerbunden) == null ? void 0 : _a.call(o, ja);
+      },
+      geaendert: () => dienst.fernzugangGeaendert()
+    });
+    await fern.starte();
+  }
   return {
     kopplung,
     dienst,
     heimnetz,
+    fern,
     nimm: (strom, herkunft) => kern.nimm(strom, herkunft),
     geaendert: (id, state) => dienst.geaendert(id, state),
     async beende() {
       dienst.beende();
       kopplung.brichAb();
+      fern == null ? void 0 : fern.beende();
       heimnetz.beende();
       await kern.beende();
     }

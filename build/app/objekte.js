@@ -112,7 +112,7 @@ const istJaNein = (w) => typeof w === "boolean";
 function alsAppDaten(n) {
   const h = n.handydaten;
   const g = n.geraet;
-  const gueltig = istText(n.name) && istText(n.zugangHash) && /^[0-9a-f]{64}$/.test(n.zugangHash) && istText(n.profil) && typeof n.gekoppeltAm === "number" && istJaNein(h == null ? void 0 : h.akku) && istJaNein(h == null ? void 0 : h.anruf) && istJaNein(h == null ? void 0 : h.benachrichtigung) && istText(g == null ? void 0 : g.android) && istText(g == null ? void 0 : g.appVersion);
+  const gueltig = istText(n.name) && istText(n.zugangHash) && /^[0-9a-f]{64}$/.test(n.zugangHash) && istText(n.profil) && typeof n.gekoppeltAm === "number" && istJaNein(h == null ? void 0 : h.akku) && istJaNein(h == null ? void 0 : h.anruf) && istJaNein(h == null ? void 0 : h.benachrichtigung) && istText(g == null ? void 0 : g.android) && istText(g == null ? void 0 : g.appVersion) && (n.fern === void 0 || istJaNein(n.fern));
   return gueltig ? { ...n, handydaten: { akku: h.akku, anruf: h.anruf, benachrichtigung: h.benachrichtigung } } : void 0;
 }
 const ORDNERNAMEN = {

@@ -5,10 +5,19 @@ import tls from 'node:tls';
 import WebSocket from 'ws';
 import { Gegenstelle } from '../../werkzeuge/gegenstelle';
 import { NAMESPACE, Speicherablage, Speicherquelle } from '../../test/speicher';
+import { alsApp, echterVermittler, hinterTls, type Vermittler, Vermittlernachbau } from '../../test/vermittler';
+import {
+    adapterSchluessel,
+    appSchluessel,
+    konfigurationszeile,
+    neuesFerngeheimnis,
+    vermittlerHash,
+} from '../basis/fernschluessel';
 import { GRENZEN, type Grenzen, type Protokoll } from '../basis/grenzen';
 import { SCHLIESSCODE } from '../basis/kern';
 import { neueAdapterId, neuerZugang, sha256 } from '../basis/kodierung';
 import { erzeugeIdentitaet, fingerabdruck } from '../basis/zertifikat';
+import type { Fernablage, Ferneinstellung } from './fernzugang';
 import type { Karte, Profil } from './rechte';
 import { type Server, starteServer } from './server';
 
@@ -100,9 +109,12 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
 
     async function starte(
         aenderung: Partial<Grenzen> = {},
-        ablage = new Speicherablage(),
-        hinweisFristMs = HINWEISFRIST_MS,
-        nachlaufMs = NACHLAUF_MS,
+        {
+            ablage = new Speicherablage(),
+            hinweisFristMs = HINWEISFRIST_MS,
+            nachlaufMs = NACHLAUF_MS,
+            fernablage,
+        }: { ablage?: Speicherablage; hinweisFristMs?: number; nachlaufMs?: number; fernablage?: Fernablage } = {},
     ): Promise<void> {
         await u?.server.beende();
         const log: string[] = [];
@@ -131,6 +143,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
             textLaenge: TEXTLAENGE,
             hinweisFristMs,
             namespace: NAMESPACE,
+            fernablage,
         });
         await laeuft;
         quelle.beiAenderung = (id, state) => server.geaendert(id, state);
@@ -371,12 +384,12 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
 
     it('andere Protokollversion: fehler version mit den unterstützten Versionen und 4002', async () => {
         const g = await verbinde();
-        g.sende({ t: 'hallo', v: 6, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
+        g.sende({ t: 'hallo', v: 7, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
         const fehler = await erwarteFehler(g, 'version', SCHLIESSCODE.version);
-        expect(fehler.unterstuetzt).to.deep.equal([3, 4, 5]);
+        expect(fehler.unterstuetzt).to.deep.equal([3, 4, 5, 6]);
         const alt = await verbinde();
         alt.sende({ t: 'koppeln', v: 2, geheimnis: 'A'.repeat(22), name: 'X', geraet });
-        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4, 5]);
+        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4, 5, 6]);
     });
 
     it('Etagen nur für Apps ab Version 5, auch leer; ältere bekommen keine', async () => {
@@ -957,7 +970,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
     });
 
     it('eine entfernte App ist sofort abwesend, auch wenn ihr Nachlauf schon läuft', async () => {
-        await starte({}, new Speicherablage(), HINWEISFRIST_MS, 60_000);
+        await starte({}, { nachlaufMs: 60_000 });
         const verbunden = await kopple();
         const getrennt = await kopple();
         getrennt.g.schliesse();
@@ -982,7 +995,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
             geraet,
         });
         await ablage.schreibe('abcdefgh', { online: true, anwesend: true });
-        await starte({}, ablage);
+        await starte({}, { ablage });
         expect(ablage.werte_.get('abcdefgh')).to.include({ online: false, anwesend: true });
         await bis(() => ablage.werte_.get('abcdefgh')?.anwesend === false, NACHLAUF_MS * 3);
     });
@@ -1091,7 +1104,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
     });
 
     it('nach der Frist: abgelaufen, Warnung im Log ohne Inhalt', async () => {
-        await starte({}, new Speicherablage(), 100);
+        await starte({}, { hinweisFristMs: 100 });
         const { appId } = await getrennt();
         geheimnisse.push('Geheimer Hinweistext');
         sendeHinweis(appId, 'Geheimer Hinweistext');
@@ -1118,7 +1131,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
             pruefsumme: 'egal',
         });
         const spaeter = ablage.skript('abcdefgh', 'hinweis.senden', 'während der Adapter stand');
-        await starte({}, ablage, 500);
+        await starte({}, { ablage, hinweisFristMs: 500 });
         await u.server.dienst.holeHinweiseNach();
         await u.server.dienst.holeHinweiseNach();
         u.server.geaendert(`${NAMESPACE}.apps.abcdefgh.hinweis.senden`, spaeter);
@@ -1132,23 +1145,205 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         expect(ablage.hinweise_.get('abcdefgh')?.warteschlange[0].text).to.equal('während der Adapter stand');
     });
 
-    it('nimmt Verbindungen über einen beliebigen Datenstrom an, so wie ein späterer Weg über das Internet', async () => {
+    // Wie der Vermittler: ein Datenstrom zum Kern, der beim Ende der einen Seite auch die andere schließt
+    function fernStrom(appId: string): Duplex {
+        const [kernSeite, appSeite] = duplexPair();
+        kernSeite.on('close', () => appSeite.destroy());
+        u.server.nimm(kernSeite, { weg: 'fern', adresse: `fern:${appId}`, app: appId });
+        return appSeite;
+    }
+
+    it('nimmt Verbindungen über einen beliebigen Datenstrom an, so wie der Fernweg', async () => {
         const { g: erste, appId, zugang } = await kopple();
         erste.schliesse();
-        const ueberDatenstrom = async (): Promise<Gegenstelle> => {
-            const [kernSeite, appSeite] = duplexPair();
-            // Wie eine Vermittlung, die beim Ende der einen Seite auch die andere schließt
-            kernSeite.on('close', () => appSeite.destroy());
-            u.server.nimm(kernSeite, { weg: 'fern', adresse: 'vermittlung' });
-            return melde(appId, zugang, { strom: appSeite });
-        };
-        await erwarteFehler(await ueberDatenstrom(), 'intern', SCHLIESSCODE.intern);
+        await erwarteFehler(await melde(appId, zugang, { strom: fernStrom(appId) }), 'intern', SCHLIESSCODE.intern);
         expect(u.log.join('\n')).to.contain('keine Adresse des Adapters bekannt');
         adressen = ['192.168.1.5:8095'];
-        const g = await ueberDatenstrom();
+        const g = await melde(appId, zugang, { strom: fernStrom(appId) });
         expect((await g.naechste()).adressen).to.deep.equal(adressen);
         await bis(() => u.ablage.werte_.get(appId)?.weg === 'fern');
         await bis(() => u.ablage.werte_.get(appId)?.anwesend === false, 1000);
         g.schliesse();
     });
+
+    it('über den Fernzugang einer App meldet sich keine andere an, und gekoppelt wird nur im Heimnetz', async () => {
+        const a = await kopple('familie', 6);
+        const b = await kopple('familie', 6);
+        a.g.schliesse();
+        b.g.schliesse();
+        await erwarteFehler(await melde(b.appId, b.zugang, { strom: fernStrom(a.appId) }, 6), 'zugang', 4001);
+        expect(u.log.join('\n')).to.contain(`App ${b.appId} über den Fernzugang einer anderen App`);
+
+        const { geheimnis } = u.server.kopplung.starte();
+        geheimnisse.push(geheimnis);
+        const fremd = await verbinde({ strom: fernStrom(a.appId) });
+        fremd.sende({ t: 'koppeln', v: 6, geheimnis, name: 'Fremd', geraet });
+        await erwarteFehler(fremd, 'zugang', 4001);
+        expect(u.log.join('\n')).to.contain('Koppeln geht nur im Heimnetz');
+        // Das Einmalgeheimnis ist dadurch nicht verbraucht.
+        const daheim = await verbinde();
+        daheim.sende({ t: 'koppeln', v: 6, geheimnis, name: 'Daheim', geraet });
+        expect((await u.server.kopplung.warte(2000))?.name).to.equal('Daheim');
+        daheim.schliesse();
+    });
+
+    it('über den Fernzugang seltener Lebenszeichen und mehr Geduld bis zum Schluss', async () => {
+        await starte({ pingMs: 50, totMs: 200, fernPingMs: 300, fernTotMs: 800 });
+        adressen = ['192.168.1.5:8095'];
+        const daheim = await kopple('familie', 6);
+        const unterwegs = await kopple('familie', 6);
+        unterwegs.g.schliesse();
+        const fern = await melde(unterwegs.appId, unterwegs.zugang, { strom: fernStrom(unterwegs.appId) }, 6);
+        expect(await fern.naechste()).to.include({ t: 'willkommen' });
+        const beginn = Date.now();
+        const daheimVorher = daheim.g.pings;
+        const still = await verbinde({ autoPong: false, strom: fernStrom(unterwegs.appId) });
+        await pause(400);
+        const offen = (g: Gegenstelle): Promise<boolean> =>
+            Promise.race([g.schluss.then(() => false), pause(0).then(() => true)]);
+        expect(await offen(still), 'über fern noch offen nach totMs').to.equal(true);
+        await still.geschlossen(2000);
+        const dauer = Date.now() - beginn;
+        expect(dauer).to.be.at.least(800);
+        expect(await offen(fern), 'beantwortet Pings und bleibt').to.equal(true);
+        expect(fern.pings).to.be.within(1, Math.ceil(dauer / 300) + 1);
+        expect(daheim.g.pings - daheimVorher).to.be.at.least(Math.floor(dauer / 50) - 3);
+        fern.schliesse();
+        daheim.g.schliesse();
+    });
+
+    const fernablage = (e: Ferneinstellung): Fernablage => {
+        let jetzt = { ...e };
+        return {
+            lies: () => Promise.resolve({ ...jetzt }),
+            schreibe: n => {
+                jetzt = { ...n };
+                return Promise.resolve();
+            },
+        };
+    };
+
+    async function freigeben(appId: string, fern: boolean): Promise<void> {
+        await u.ablage.aendere(appId, { fern });
+        u.quelle.app(appId, u.ablage.apps.get(appId));
+        // Wie main.ts bei jeder Änderung am Objekt einer App
+        u.server.fern!.appsGeaendert();
+    }
+
+    const vermittlerArten: [string, (zeile: string, hash: string) => Promise<Vermittler | undefined>][] = [
+        ['den Nachbau', (_, hash) => Vermittlernachbau.starte(hash)],
+        ['den Vermittler aus Go', zeile => echterVermittler(zeile)],
+    ];
+    for (const [art, baue] of vermittlerArten) {
+        describe(`Fernzugang über ${art} hinter TLS`, function () {
+            this.timeout(20_000);
+            const ferngeheimnis = neuesFerngeheimnis();
+            // Nach einer Freigabe: Abgleich mit dem Vermittler nach 500 ms
+            const ABGLEICH_MS = 700;
+            let vermittler: Vermittler | undefined;
+
+            before(async function () {
+                this.timeout(120_000);
+                const innen = await baue(
+                    konfigurationszeile(adapterId, ferngeheimnis),
+                    vermittlerHash(adapterSchluessel(ferngeheimnis)),
+                );
+                vermittler = innen && (await hinterTls(innen));
+                if (!vermittler) {
+                    await innen?.beende();
+                    this.skip();
+                }
+            });
+            after(() => vermittler?.beende());
+            beforeEach(async () => {
+                geheimnisse.push(ferngeheimnis);
+                adressen = ['192.168.1.5:8095'];
+                await starte(
+                    {},
+                    { fernablage: fernablage({ adresse: vermittler!.adresse, geheimnis: ferngeheimnis }) },
+                );
+                await bis(() => u.server.fern?.stand.art === 'verbunden', 5000);
+            });
+
+            const fernFuer = (appId: string, zugang: string): Record<string, unknown> => ({
+                adresse: vermittler!.adresse,
+                schluessel: appSchluessel(ferngeheimnis, appId, sha256(zugang).toString('hex')),
+                pingS: 600,
+                totS: 1500,
+            });
+
+            async function unterwegs(): Promise<{ g: Gegenstelle; appId: string; zugang: string }> {
+                const { g: daheim, appId, zugang, willkommen: zuerst } = await kopple('familie', 6);
+                expect(zuerst).to.not.have.property('fern');
+                await freigeben(appId, true);
+                const rechte = await daheim.naechste();
+                expect(rechte).to.include({ t: 'rechte' }).and.have.deep.property('fern', fernFuer(appId, zugang));
+                geheimnisse.push(rechte.fern.schluessel);
+                daheim.schliesse();
+                await pause(ABGLEICH_MS);
+                const g = await melde(
+                    appId,
+                    zugang,
+                    { strom: await alsApp(vermittler!.adresse, rechte.fern.schluessel) },
+                    6,
+                );
+                const willkommen = await g.naechste();
+                expect(willkommen).to.include({ t: 'willkommen', v: 6 });
+                expect(willkommen.fern).to.deep.equal(rechte.fern);
+                return { g, appId, zugang };
+            }
+
+            it('App meldet sich über den Vermittler an, TLS bis zum Adapter, und schaltet', async () => {
+                const { g, appId } = await unterwegs();
+                await bis(() => u.ablage.werte_.get(appId)?.weg === 'fern');
+                g.sende({ t: 'setze', n: 1, id: 'zigbee.0.lampe.state', val: true });
+                expect(await g.naechste()).to.deep.equal({ t: 'quittung', n: 1, ok: true });
+                expect(u.quelle.zustaende_.get('zigbee.0.lampe.state')).to.include({ val: true, ack: false });
+                g.beende();
+            });
+
+            it('Freigabe entzogen: Schluss mit 4010, der Vermittler lässt die App nicht mehr durch, daheim geht es', async () => {
+                const { g, appId, zugang } = await unterwegs();
+                await freigeben(appId, false);
+                expect((await g.geschlossen()).code).to.equal(SCHLIESSCODE.fernAus);
+                expect(u.log.join('\n')).to.contain(`App ${appId}: Fernzugang ausgeschaltet`);
+                await pause(ABGLEICH_MS);
+                const schluessel = fernFuer(appId, zugang).schluessel as string;
+                expect(await abgewiesen(alsApp(vermittler!.adresse, schluessel))).to.contain('401');
+                const daheim = await melde(appId, zugang, undefined, 6);
+                expect(await daheim.naechste())
+                    .to.include({ t: 'willkommen' })
+                    .and.not.have.property('fern');
+                daheim.schliesse();
+            });
+
+            it('nur Apps ab Protokoll 6 erfahren vom Fernzugang', async () => {
+                const { g, appId, zugang } = await kopple('familie', 5);
+                await freigeben(appId, true);
+                await pause(300);
+                expect(await g.alle()).to.deep.equal([]);
+                g.schliesse();
+                const wieder = await melde(appId, zugang, undefined, 5);
+                expect(await wieder.naechste())
+                    .to.include({ t: 'willkommen', v: 5 })
+                    .and.not.have.property('fern');
+                wieder.schliesse();
+            });
+
+            it('neues Geheimnis: Apps bekommen sofort den neuen Schlüssel, der Vermittler kennt den Adapter nicht mehr', async () => {
+                const { g, appId, zugang } = await kopple('familie', 6);
+                await freigeben(appId, true);
+                const alt = (await g.naechste()).fern;
+                await u.server.fern!.neuesGeheimnis();
+                const neu = (await g.naechste()).fern;
+                expect(neu.schluessel).to.not.equal(alt.schluessel);
+                geheimnisse.push(alt.schluessel, neu.schluessel);
+                expect(neu).to.deep.include({ adresse: alt.adresse, pingS: 600 });
+                await bis(() => u.server.fern?.stand.art === 'getrennt', 5000);
+                expect((u.server.fern!.stand as { grund: string }).grund).to.contain('Zeile für den Vermittler fehlt');
+                expect(sha256(zugang).toString('hex')).to.equal(u.ablage.apps.get(appId)?.zugangHash);
+                g.schliesse();
+            });
+        });
+    }
 });

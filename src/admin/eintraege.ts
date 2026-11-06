@@ -1,6 +1,6 @@
 import type { Katalog } from '../app/katalog';
 import type { Eintragsablage, Ordner } from '../app/objekte';
-import { istKennung } from '../app/rechte';
+import { istKennung, text } from '../app/rechte';
 import type { Protokoll } from '../basis/grenzen';
 
 // Was die Seiten zeigen und übersetzen: nicht bereit, zu viele, weg, ungültig (mit Einzelheiten), gescheitert (mit
@@ -17,6 +17,21 @@ export const nachricht = (n: unknown): Record<string, unknown> =>
 export function seitenadresse(namespace: string, datei: string): string {
     const adapter = namespace.slice(0, namespace.lastIndexOf('.'));
     return `adapter/${adapter}/${datei}?instanz=${encodeURIComponent(namespace)}`;
+}
+
+// Räume für die Seiten, in der Folge der App, mit Namen in der Systemsprache. Heißen zwei gleich, etwa ein mitgelieferter
+// Raum von ioBroker und einer, den jemand oder ein Adapter dazu angelegt hat, steht die ID dahinter; sonst ließen sie
+// sich in keiner Auswahl unterscheiden.
+export function raeumeFuerSeiten(katalog: Katalog): { id: string; name: string }[] {
+    const raeume = katalog.raeume().map(r => ({ id: r.id, name: text(r.name, katalog.sprache, r.id).trim() }));
+    const schluessel = (name: string): string => name.toLocaleLowerCase();
+    const anzahl = new Map<string, number>();
+    for (const r of raeume) {
+        anzahl.set(schluessel(r.name), (anzahl.get(schluessel(r.name)) ?? 0) + 1);
+    }
+    return raeume.map(r =>
+        anzahl.get(schluessel(r.name))! > 1 ? { ...r, name: `${r.name} (${r.id.slice('enum.rooms.'.length)})` } : r,
+    );
 }
 
 export interface Eintragsart<T extends { name: string }> {

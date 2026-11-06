@@ -48,6 +48,8 @@ const SCHLIESSCODE = {
   ersetzt: 4007,
   entfernt: 4008,
   frist: 4009,
+  // Fernzugang der App ausgeschaltet; die Kopplung bleibt
+  fernAus: 4010,
   ende: 1001,
   intern: 1011
 };
@@ -88,6 +90,7 @@ class Verbindung {
   getrennt = false;
   schliesst = false;
   letzteAntwort = Date.now();
+  letzterPing = 0;
   get offen() {
     return !this.schliesst && this.ws.readyState === import_ws.WebSocket.OPEN;
   }
@@ -139,11 +142,14 @@ class Verbindung {
       this.trennungen.push(fn);
     }
   }
+  // Aufgerufen im Takt von pingMs; über fern wird nur alle fernPingMs gepingt.
   pinge(jetzt) {
-    if (jetzt - this.letzteAntwort >= this.grenzen.totMs) {
+    const fern = this.herkunft.weg === "fern";
+    if (jetzt - this.letzteAntwort >= (fern ? this.grenzen.fernTotMs : this.grenzen.totMs)) {
       this.log.debug(`Verbindung von ${this.herkunft.adresse} getrennt: keine Antwort auf Ping`);
       this.trenne();
-    } else if (this.offen) {
+    } else if (this.offen && jetzt - this.letzterPing >= (fern ? this.grenzen.fernPingMs : 0)) {
+      this.letzterPing = jetzt;
       this.ws.ping();
     }
   }

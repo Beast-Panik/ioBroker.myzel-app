@@ -5,11 +5,13 @@ import readline from 'node:readline';
 import { adapterPruefer, appPruefer } from '../src/app/dienst';
 import type { Profil } from '../src/app/rechte';
 import { type Server, starteServer } from '../src/app/server';
+import { adapterSchluessel, neuesFerngeheimnis, vermittlerHash } from '../src/basis/fernschluessel';
 import { GRENZEN, type Protokoll } from '../src/basis/grenzen';
 import { type Kopplungsanfrage, qrInhalt } from '../src/basis/kopplung';
 import { neueAdapterId } from '../src/basis/kodierung';
 import { erzeugeIdentitaet, fingerabdruck } from '../src/basis/zertifikat';
 import { NAMESPACE, Speicherablage, Speicherquelle } from '../test/speicher';
+import { hinterTls, type Vermittler, Vermittlernachbau } from '../test/vermittler';
 
 type Befehl = Record<string, any>;
 
@@ -61,6 +63,21 @@ async function main(): Promise<void> {
     const ablage = new Speicherablage(quelle);
     const adapterId = neueAdapterId();
     const identitaet = erzeugeIdentitaet(adapterId);
+    // Mit GEGENPROBE_FERN=1 der Nachbau des Vermittlers hinter TLS wie NPM Plus (KONZEPT-FERNZUGANG.md, Abschnitt 14).
+    // Braucht openssl; ohne steht in der Bereitmeldung kein vermittler.
+    const ferngeheimnis = neuesFerngeheimnis();
+    let nachbau: Vermittlernachbau | undefined;
+    let vermittler: Vermittler | undefined;
+    if (process.env.GEGENPROBE_FERN === '1') {
+        nachbau = await Vermittlernachbau.starte(vermittlerHash(adapterSchluessel(ferngeheimnis)));
+        vermittler = await hinterTls(nachbau);
+        if (!vermittler) {
+            await nachbau.beende();
+            nachbau = undefined;
+        }
+    }
+    // Über den Vermittler kennt der Adapter keine Adresse aus der Verbindung; willkommen braucht aber eine.
+    let heimadressen: string[] = [];
     let bereit!: () => void;
     const laeuft = new Promise<void>(r => (bereit = r));
     const server: Server = await starteServer({
@@ -68,7 +85,7 @@ async function main(): Promise<void> {
         identitaet,
         ablage,
         port: 0,
-        adressen: () => [],
+        adressen: () => heimadressen,
         katalog: quelle.katalog,
         zustaende: quelle,
         log: protokoll,
@@ -82,10 +99,19 @@ async function main(): Promise<void> {
         namespace: NAMESPACE,
         // Etwa GEGENPROBE_VERSIONEN=3 für einen Adapter vor Protokoll 4
         versionen: process.env.GEGENPROBE_VERSIONEN?.split(',').map(Number),
+        ...(vermittler && {
+            fernablage: {
+                lies: () => Promise.resolve({ adresse: vermittler.adresse, geheimnis: ferngeheimnis }),
+                schreibe: () => Promise.resolve(),
+            },
+        }),
     });
     await laeuft;
     quelle.beiAenderung = (id, state) => server.geaendert(id, state);
     const port = server.heimnetz.port!;
+    if (vermittler) {
+        heimadressen = [`127.0.0.1:${port}`];
+    }
     const zuApp = adapterPruefer();
     const zumAdapter = appPruefer();
     let anfrage: Kopplungsanfrage | undefined;
@@ -133,6 +159,28 @@ async function main(): Promise<void> {
             await ablage.aendere(b.app, { handydaten: b.handydaten });
             return {};
         },
+        // Freigabe des Fernzugangs, wie im Reiter; wartet, bis der Vermittler die Liste hat
+        fern: async b => {
+            await ablage.aendere(b.app, { fern: b.an });
+            quelle.app(b.app, ablage.apps.get(b.app));
+            server.fern!.appsGeaendert();
+            const hashes = (): number =>
+                (nachbau?.steuer.at(-1) as { hashes?: string[] } | undefined)?.hashes?.length ?? -1;
+            const vorher = nachbau?.steuer.length ?? 0;
+            for (let i = 0; i < 50 && (nachbau?.steuer.length ?? 0) === vorher; i++) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+            return { hashes: hashes() };
+        },
+        // Sitzungen beim Vermittler, etwa um einen Abbruch von außen nachzustellen
+        vermittler: b => {
+            if (b.trennen && nachbau) {
+                for (const s of nachbau.sitzungen.values()) {
+                    s.app.terminate();
+                }
+            }
+            return { sitzungen: nachbau?.sitzungen.size ?? 0, steuerung: !!nachbau?.steuerung };
+        },
         entfernen: async b => {
             await server.dienst.entferne(b.app);
             return {};
@@ -161,6 +209,7 @@ async function main(): Promise<void> {
         log: () => ({ log }),
         ende: async () => {
             await server.beende();
+            await vermittler?.beende();
             return {};
         },
     };
@@ -168,7 +217,18 @@ async function main(): Promise<void> {
     const aus = (o: unknown): void => {
         process.stdout.write(`${JSON.stringify(o)}\n`);
     };
-    aus({ bereit: true, port, adapterId, fingerabdruck: fingerabdruck(identitaet.zertifikat), grenzen: GRENZEN });
+    // Bis die Steuerverbindung steht, antwortet der Vermittler Apps mit 503
+    for (let i = 0; i < 100 && vermittler && server.fern?.stand.art !== 'verbunden'; i++) {
+        await new Promise(r => setTimeout(r, 50));
+    }
+    aus({
+        bereit: true,
+        port,
+        adapterId,
+        fingerabdruck: fingerabdruck(identitaet.zertifikat),
+        grenzen: GRENZEN,
+        ...(vermittler && { vermittler: { adresse: vermittler.adresse, zertifikat: vermittler.zertifikat } }),
+    });
     const zeilen = readline.createInterface({ input: process.stdin, terminal: false });
     for await (const zeile of zeilen) {
         const b = JSON.parse(zeile) as Befehl;

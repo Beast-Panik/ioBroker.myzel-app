@@ -91,6 +91,12 @@ describe('Kartenseite', () => {
         expect(stand.hoechstens).to.equal(KARTEN_HOECHSTENS);
     });
 
+    it('Räume mit gleichem Namen tragen die ID dahinter, auch bei anderer Schreibung', async () => {
+        quelle.raum('kitchen', 'kitchen ', []);
+        const stand = await frage<Kartenstand>('kartenstand');
+        expect(stand.raeume.map(r => r.name).sort()).to.deep.equal(['Bad', 'Kitchen (kueche)', 'kitchen (kitchen)']);
+    });
+
     it('Datenpunkte suchen: passender Typ, jedes Wort in ID oder Name, nie unter system, nach ID', async () => {
         const suche = (n: object): Promise<{ treffer: Treffer[]; mehr: boolean }> => frage('datenpunkte', n);
         const ids = async (n: object): Promise<string[]> => (await suche(n)).treffer.map(t => t.id);

@@ -1,6 +1,6 @@
-// Gemeinsam für die Seiten in den Reitern „Karten“, „Räume“ und „Profile“ der Instanzeinstellungen (KONZEPT-KARTEN.md,
-// Abschnitte 12 und 13): Verbindung zur Instanz, Thema, Texte, Kacheln, Dialog. Die Seiten zeigen nur und fragen; prüfen und speichern tut
-// die Instanz über sendTo (src/admin/).
+// Gemeinsam für die Seiten in den Reitern „Karten“, „Räume“, „Profile“ (KONZEPT-KARTEN.md, Abschnitte 12 und 13) und
+// „Fernzugang“ (KONZEPT-FERNZUGANG.md, Abschnitt 12) der Instanzeinstellungen: Verbindung zur Instanz, Thema, Texte, Kacheln,
+// Dialog. Die Seiten zeigen nur und fragen; prüfen und speichern tut die Instanz über sendTo (src/admin/).
 
 export const instanz = new URLSearchParams(location.search).get('instanz');
 
@@ -60,10 +60,13 @@ export function texte(eigene, code = navigator.language) {
     return { ...GEMEINSAM[s], ...e, ablehnung: { ...GEMEINSAM[s].ablehnung, ...e.ablehnung }, code: s };
 }
 
-// Neue Texte, etwa in der Systemsprache; beschriftet, was alle Seiten haben
+// Neue Texte, etwa in der Systemsprache; beschriftet den Dialog, wo es einen gibt
 export function nimmTexte(neu) {
     t = neu;
     document.documentElement.lang = t.code;
+    if (!$('dialog')) {
+        return;
+    }
     $('speichern').textContent = t.speichern;
     $('abbrechen').textContent = t.abbrechen;
     $('loeschen').textContent = t.loeschen;
@@ -247,11 +250,31 @@ export async function ausDialog(knopf, befehl, nachricht, { lade, grenze }) {
 }
 
 // Verbindet sich mit ioBroker und lädt bei jeder Verbindung, und wenn die Seite wieder sichtbar wird: Ein anderes
-// Fenster oder ein Skript kann inzwischen etwas geändert haben, und das Thema des Admins kann umgeschaltet sein.
-export function starte({ name, lade, neu, speichere, loesche, loeschfrage }) {
+// Fenster oder ein Skript kann inzwischen etwas geändert haben, und das Thema des Admins kann umgeschaltet sein. Falsch,
+// wenn die Seite ihre Instanz nicht kennt.
+export function verbinde({ name, lade }) {
     thema();
     if (!instanz) {
         meldung(t.keineInstanz);
+        return false;
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            thema();
+            if (!$('dialog')?.open) {
+                void lade();
+            }
+        }
+    });
+    socket = io.connect('/', { name });
+    socket.on('connect', () => void lade());
+    socket.on('disconnect', () => meldung(t.keineVerbindung));
+    return true;
+}
+
+// Für die Seiten mit Kacheln und Dialog
+export function starte({ name, lade, neu, speichere, loesche, loeschfrage }) {
+    if (!verbinde({ name, lade })) {
         return;
     }
     $('neu').addEventListener('click', neu);
@@ -260,15 +283,4 @@ export function starte({ name, lade, neu, speichere, loesche, loeschfrage }) {
     $('loeschen').addEventListener('click', () => zeigeLoeschfrage(loeschfrage()));
     $('nichtLoeschen').addEventListener('click', () => zeigeLoeschfrage());
     $('wirklichLoeschen').addEventListener('click', loesche);
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-            thema();
-            if (!$('dialog').open) {
-                void lade();
-            }
-        }
-    });
-    socket = io.connect('/', { name });
-    socket.on('connect', () => void lade());
-    socket.on('disconnect', () => meldung(t.keineVerbindung));
 }

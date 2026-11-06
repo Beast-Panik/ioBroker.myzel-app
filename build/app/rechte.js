@@ -33,6 +33,7 @@ __export(rechte_exports, {
   ETAGENNAME_LAENGE: () => ETAGENNAME_LAENGE,
   ETAGEN_HOECHSTENS: () => ETAGEN_HOECHSTENS,
   ETAGEN_SEIT: () => ETAGEN_SEIT,
+  FERN_SEIT: () => FERN_SEIT,
   KARTENARTEN: () => KARTENARTEN,
   KARTENTYPEN: () => KARTENTYPEN,
   KARTEN_HOECHSTENS: () => KARTEN_HOECHSTENS,
@@ -91,6 +92,7 @@ const ETAGEN_HOECHSTENS = import_adapter_an_app_schema.default.$defs.rechteInhal
 const ETAGENNAME_LAENGE = import_adapter_an_app_schema.default.$defs.etage.properties.name.maxLength;
 const ETAGENKURZ_LAENGE = import_adapter_an_app_schema.default.$defs.etage.properties.kurz.maxLength;
 const ETAGEN_SEIT = 5;
+const FERN_SEIT = 6;
 const NAME_LAENGE = 200;
 const BEZEICHNUNG_LAENGE = 60;
 const PROFILNAME_LAENGE = 60;
@@ -438,6 +440,7 @@ function kartenEintrag(id, karte, recht, raum, quelle) {
   ETAGENNAME_LAENGE,
   ETAGEN_HOECHSTENS,
   ETAGEN_SEIT,
+  FERN_SEIT,
   KARTENARTEN,
   KARTENTYPEN,
   KARTEN_HOECHSTENS,

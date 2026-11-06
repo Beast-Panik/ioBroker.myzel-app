@@ -180,6 +180,7 @@ class Kartenseite {
       return true;
     }
     const zuordnung = vorschlag.zuordnung;
+    const namen = new Map((0, import_eintraege.raeumeFuerSeiten)(katalog).map((r) => [r.id, r.name]));
     const betroffen = raeume.filter(
       (r) => r.id === karte.raum || r.mitglieder.some((m) => zuordnung.some((z) => (0, import_rechte.liegtUnter)(m, z)))
     );
@@ -187,7 +188,7 @@ class Kartenseite {
     try {
       for (const r of betroffen) {
         if (await aendere(r.id, (m) => (0, import_erkennung.verschoben)(m, zuordnung, r.id === karte.raum))) {
-          const name = (0, import_rechte.text)(r.name, katalog.sprache, r.id);
+          const name = namen.get(r.id);
           if (r.id === karte.raum) {
             geaendert.unshift(`jetzt in ${name}`);
           } else {
@@ -230,7 +231,7 @@ class Kartenseite {
     }));
     return {
       sprache,
-      raeume: katalog.raeume().map((r) => ({ id: r.id, name: (0, import_rechte.text)(r.name, sprache, r.id) })),
+      raeume: (0, import_eintraege.raeumeFuerSeiten)(katalog),
       arten: ARTEN,
       karten,
       namen: this.namen(katalog, karten),

@@ -17,5 +17,7 @@
     "Rooms page offline": "The rooms page needs the running instance. Start the instance, then reload this page.",
     "Profiles": "Profiles",
     "Profiles page offline": "The profiles page needs the running instance. Start the instance, then reload this page.",
+    "Remote access": "Remote access",
+    "Remote access page offline": "The remote access page needs the running instance. Start the instance, then reload this page.",
     "Settings": "Settings"
 }

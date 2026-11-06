@@ -3,6 +3,9 @@ export const GRENZEN = {
     anmeldungMs: 10_000,
     pingMs: 15_000,
     totMs: 45_000,
+    // Über den Vermittler selten: Im Mobilfunk hielt eine stille Verbindung in F0 mindestens 30 min (KONZEPT-FERNZUGANG.md).
+    fernPingMs: 10 * 60_000,
+    fernTotMs: 25 * 60_000,
     nachrichtBytes: 64 * 1024,
     sendepufferBytes: 1024 * 1024,
     teilBytes: 256 * 1024,

@@ -20,6 +20,7 @@ var eintraege_exports = {};
 __export(eintraege_exports, {
   Eintraege: () => Eintraege,
   nachricht: () => nachricht,
+  raeumeFuerSeiten: () => raeumeFuerSeiten,
   seitenadresse: () => seitenadresse
 });
 module.exports = __toCommonJS(eintraege_exports);
@@ -28,6 +29,18 @@ const nachricht = (n) => n && typeof n === "object" && !Array.isArray(n) ? n : {
 function seitenadresse(namespace, datei) {
   const adapter = namespace.slice(0, namespace.lastIndexOf("."));
   return `adapter/${adapter}/${datei}?instanz=${encodeURIComponent(namespace)}`;
+}
+function raeumeFuerSeiten(katalog) {
+  var _a;
+  const raeume = katalog.raeume().map((r) => ({ id: r.id, name: (0, import_rechte.text)(r.name, katalog.sprache, r.id).trim() }));
+  const schluessel = (name) => name.toLocaleLowerCase();
+  const anzahl = /* @__PURE__ */ new Map();
+  for (const r of raeume) {
+    anzahl.set(schluessel(r.name), ((_a = anzahl.get(schluessel(r.name))) != null ? _a : 0) + 1);
+  }
+  return raeume.map(
+    (r) => anzahl.get(schluessel(r.name)) > 1 ? { ...r, name: `${r.name} (${r.id.slice("enum.rooms.".length)})` } : r
+  );
 }
 class Eintraege {
   constructor(art, o) {
@@ -96,6 +109,7 @@ class Eintraege {
 0 && (module.exports = {
   Eintraege,
   nachricht,
+  raeumeFuerSeiten,
   seitenadresse
 });
 //# sourceMappingURL=eintraege.js.map

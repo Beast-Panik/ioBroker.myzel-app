@@ -78,6 +78,8 @@ export const ETAGENKURZ_LAENGE = adapterAnApp.$defs.etage.properties.kurz.maxLen
 
 // Ab dieser Protokollversion kennt die App Etagen und zeigt die Räume in der Reihenfolge des Adapters
 export const ETAGEN_SEIT = 5;
+// Ab dieser Protokollversion bekommt eine freigegebene App Vermittler und Schlüssel für den Fernzugang
+export const FERN_SEIT = 6;
 
 // Eine Etage als Objekt <namespace>.etagen.<id>: position ordnet die Etagen von oben nach unten, raeume die Räume darin.
 export interface Etage {

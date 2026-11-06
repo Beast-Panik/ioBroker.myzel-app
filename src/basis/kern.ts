@@ -13,6 +13,8 @@ export interface Herkunft {
     weg: Weg;
     adresse: string;
     eigeneAdresse?: string;
+    // Über den Vermittler: die App, deren Schlüssel die Sitzung geöffnet hat
+    app?: string;
 }
 
 export const SCHLIESSCODE = {
@@ -25,6 +27,8 @@ export const SCHLIESSCODE = {
     ersetzt: 4007,
     entfernt: 4008,
     frist: 4009,
+    // Fernzugang der App ausgeschaltet; die Kopplung bleibt
+    fernAus: 4010,
     ende: 1001,
     intern: 1011,
 } as const;
@@ -48,6 +52,7 @@ export class Verbindung {
     private getrennt = false;
     private schliesst = false;
     private letzteAntwort = Date.now();
+    private letzterPing = 0;
 
     public constructor(
         private readonly ws: WebSocket,
@@ -138,11 +143,14 @@ export class Verbindung {
         }
     }
 
+    // Aufgerufen im Takt von pingMs; über fern wird nur alle fernPingMs gepingt.
     public pinge(jetzt: number): void {
-        if (jetzt - this.letzteAntwort >= this.grenzen.totMs) {
+        const fern = this.herkunft.weg === 'fern';
+        if (jetzt - this.letzteAntwort >= (fern ? this.grenzen.fernTotMs : this.grenzen.totMs)) {
             this.log.debug(`Verbindung von ${this.herkunft.adresse} getrennt: keine Antwort auf Ping`);
             this.trenne();
-        } else if (this.offen) {
+        } else if (this.offen && jetzt - this.letzterPing >= (fern ? this.grenzen.fernPingMs : 0)) {
+            this.letzterPing = jetzt;
             this.ws.ping();
         }
     }

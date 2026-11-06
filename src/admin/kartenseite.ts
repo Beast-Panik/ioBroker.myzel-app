@@ -13,10 +13,9 @@ import {
     alsKarte,
     liegtUnter,
     maengelDerKarte,
-    text,
 } from '../app/rechte';
 import type { Protokoll } from '../basis/grenzen';
-import { type Ablehnung, Eintraege, nachricht, seitenadresse } from './eintraege';
+import { type Ablehnung, Eintraege, nachricht, raeumeFuerSeiten, seitenadresse } from './eintraege';
 
 // Über sendTo von der Kartenseite (admin/karten.html), eingebettet im Reiter „Karten“ der Instanzeinstellungen
 export const KARTENBEFEHLE: readonly string[] = [
@@ -246,6 +245,7 @@ export class Kartenseite {
             return true;
         }
         const zuordnung = vorschlag.zuordnung;
+        const namen = new Map(raeumeFuerSeiten(katalog).map(r => [r.id, r.name]));
         const betroffen = raeume.filter(
             r => r.id === karte.raum || r.mitglieder.some(m => zuordnung.some(z => liegtUnter(m, z))),
         );
@@ -253,7 +253,7 @@ export class Kartenseite {
         try {
             for (const r of betroffen) {
                 if (await aendere(r.id, m => verschoben(m, zuordnung, r.id === karte.raum))) {
-                    const name = text(r.name, katalog.sprache, r.id);
+                    const name = namen.get(r.id);
                     if (r.id === karte.raum) {
                         geaendert.unshift(`jetzt in ${name}`);
                     } else {
@@ -297,7 +297,7 @@ export class Kartenseite {
         }));
         return {
             sprache,
-            raeume: katalog.raeume().map(r => ({ id: r.id, name: text(r.name, sprache, r.id) })),
+            raeume: raeumeFuerSeiten(katalog),
             arten: ARTEN,
             karten,
             namen: this.namen(katalog, karten),

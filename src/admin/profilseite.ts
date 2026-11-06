@@ -9,10 +9,9 @@ import {
     istPersoenlich,
     maengelDerKarte,
     sicht,
-    text,
 } from '../app/rechte';
 import type { Protokoll } from '../basis/grenzen';
-import { type Ablehnung, Eintraege, nachricht, seitenadresse } from './eintraege';
+import { type Ablehnung, Eintraege, nachricht, raeumeFuerSeiten, seitenadresse } from './eintraege';
 
 // Über sendTo von der Profilseite (admin/profile.html), eingebettet im Reiter „Profile“ der Instanzeinstellungen
 export const PROFILBEFEHLE: readonly string[] = [
@@ -142,7 +141,7 @@ export class Profilseite {
         const apps = await this.appsJeProfil();
         return {
             sprache,
-            raeume: katalog.raeume().map(r => ({ id: r.id, name: text(r.name, sprache, r.id) })),
+            raeume: raeumeFuerSeiten(katalog),
             karten: katalog.karten().map(([id, k]) => ({
                 id,
                 name: k.name,

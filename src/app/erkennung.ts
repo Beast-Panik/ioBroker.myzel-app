@@ -80,7 +80,12 @@ export interface Erkannt {
     typ: Kartentyp;
     teile: Record<string, string>;
     art: Types;
+    // Das Gerät in ioBroker, aus dem es stammt
+    geraet?: { id: string; name: string };
 }
+
+// Vor der Benennung: das Gerät nur als ID
+type Roh = Omit<Erkannt, 'name' | 'geraet'> & { geraet?: string };
 
 const istGeraet = (o: ioBroker.Object | undefined): boolean => o?.type === 'device' || o?.type === 'channel';
 
@@ -88,6 +93,9 @@ function eltern(id: string): string[] {
     const teile = id.split('.');
     return teile.slice(1, -1).map((_, i) => teile.slice(0, teile.length - 1 - i).join('.'));
 }
+
+const geraetVon = (herkunft: string, objekte: Record<string, ioBroker.Object>): string | undefined =>
+    [herkunft, ...eltern(herkunft)].find(x => objekte[x]?.type === 'device');
 
 // Geräte in ioBroker, die eine Karte werden können, erkannt an Rollen und Aufbau mit `@iobroker/type-detector`. objekte
 // sind Datenpunkte, Kanäle, Geräte, Aufzählungen und Adapter. Gegen Datenpunkte und Karten geprüft wird erst in
@@ -123,7 +131,7 @@ export function erkenneGeraete(
     ];
     const erkenner = new ChannelDetector();
     const vergeben = new Set<string>();
-    const ergebnis: Omit<Erkannt, 'name'>[] = [];
+    const ergebnis: Roh[] = [];
     for (const id of reihe) {
         const gefunden =
             erkenner.detect({
@@ -148,10 +156,17 @@ export function erkenneGeraete(
             const kanal = eltern(dps[0]).find(
                 e => nutzbar[e]?.type === 'channel' && liegtUnter(e, id) && dps.every(dp => liegtUnter(dp, e)),
             );
-            ergebnis.push({ herkunft: kanal ?? id, typ: ZUORDNUNG[steuerung.type]!.typ, teile, art: steuerung.type });
+            const herkunft = kanal ?? id;
+            ergebnis.push({
+                herkunft,
+                typ: ZUORDNUNG[steuerung.type]!.typ,
+                teile,
+                art: steuerung.type,
+                geraet: geraetVon(herkunft, nutzbar),
+            });
         }
     }
-    return benenne(ohneDoppelteAliase(ergebnis, nutzbar), nutzbar, o.sprache);
+    return benenne(ohneEinstellungen(ohneDoppelteAliase(ergebnis, nutzbar), nutzbar), nutzbar, o.sprache);
 }
 
 function teileAus(steuerung: PatternControl): Record<string, string> {
@@ -171,36 +186,27 @@ function teileAus(steuerung: PatternControl): Record<string, string> {
 
 // Ein Kanal heißt oft nur „Relay0“ oder wie sein Gerät mit „:1“. Kommt aus einem Gerät nur ein Vorschlag, trägt er den
 // Namen des Geräts, sonst den des Kanals, mit dem Gerät davor, wo es fehlt.
-function benenne(liste: Omit<Erkannt, 'name'>[], objekte: Record<string, ioBroker.Object>, sprache: string): Erkannt[] {
+function benenne(liste: Roh[], objekte: Record<string, ioBroker.Object>, sprache: string): Erkannt[] {
     const name = (id: string): string =>
-        text(objekte[id]?.common.name, sprache, id.slice(id.lastIndexOf('.') + 1)).trim();
-    const geraete = liste.map(e =>
-        objekte[e.herkunft]?.type === 'device'
-            ? e.herkunft
-            : eltern(e.herkunft).find(x => objekte[x]?.type === 'device'),
-    );
-    return liste.map((e, i) => {
-        const geraet = geraete[i];
+        (text(objekte[id]?.common.name, sprache, id.slice(id.lastIndexOf('.') + 1)).trim() || id).slice(0, NAME_LAENGE);
+    return liste.map(({ geraet, ...e }) => {
         const eigener = name(e.herkunft);
-        let gesamt = eigener;
-        if (geraet && geraet !== e.herkunft) {
-            const gname = name(geraet);
-            gesamt =
-                geraete.filter(g => g === geraet).length === 1
-                    ? gname
-                    : eigener.startsWith(gname)
-                      ? eigener
-                      : `${gname} ${eigener}`;
+        if (!geraet) {
+            return { ...e, name: eigener };
         }
-        return { ...e, name: (gesamt || e.herkunft).slice(0, NAME_LAENGE) };
+        const gname = name(geraet);
+        const gesamt =
+            geraet === e.herkunft || liste.filter(x => x.geraet === geraet).length === 1
+                ? gname
+                : eigener.startsWith(gname)
+                  ? eigener
+                  : `${gname} ${eigener}`;
+        return { ...e, name: gesamt.slice(0, NAME_LAENGE), geraet: { id: geraet, name: gname } };
     });
 }
 
 // Ein Alias und sein Ziel sind dasselbe Gerät. Wer Aliase anlegt, will sie nutzen; das Original fällt weg.
-function ohneDoppelteAliase<T extends Omit<Erkannt, 'name'>>(
-    liste: T[],
-    objekte: Record<string, ioBroker.Object>,
-): T[] {
+function ohneDoppelteAliase<T extends Roh>(liste: T[], objekte: Record<string, ioBroker.Object>): T[] {
     const ziele = new Set(
         liste
             .filter(e => liegtUnter(e.herkunft, 'alias'))
@@ -208,6 +214,16 @@ function ohneDoppelteAliase<T extends Omit<Erkannt, 'name'>>(
             .flatMap(dp => merkmale(dp, objekte[dp]?.common as ioBroker.StateCommon | undefined, '').ziele ?? []),
     );
     return liste.filter(e => liegtUnter(e.herkunft, 'alias') || !Object.values(e.teile).every(dp => ziele.has(dp)));
+}
+
+// Ein Gerät bringt neben seiner Steuerung oft Einstellungen als Datenpunkte mit der allgemeinen Rolle state mit, etwa
+// bei Zigbee „Farbbefehle auch im Aus“ einer Lampe oder die Fenstererkennung eines Thermostats. Der Erkenner hält sie
+// für Steckdosen. Kommt aus demselben Gerät etwas Bestimmteres, sind sie Einstellungen; sonst bleiben sie Schalter.
+function ohneEinstellungen(liste: Roh[], objekte: Record<string, ioBroker.Object>): Roh[] {
+    const allgemein = (e: Roh): boolean =>
+        e.typ === 'schalter' && (objekte[e.teile.schalten]?.common as { role?: unknown } | undefined)?.role === 'state';
+    const bestimmt = new Set(liste.filter(e => e.geraet && !allgemein(e)).map(e => e.geraet));
+    return liste.filter(e => !allgemein(e) || !bestimmt.has(e.geraet));
 }
 
 export interface Vorschlag {
@@ -227,6 +243,7 @@ interface Gruppe {
     teile: Record<string, string>;
     arten: Types[];
     raum: string;
+    geraet?: Erkannt['geraet'];
 }
 
 // Wie die Teile in einer Karte des Typs stehen, undefined, wenn sie dort nicht hingehören
@@ -241,10 +258,11 @@ function teileAls(g: Gruppe, typ: Kartentyp): Record<string, string> | undefined
     return undefined;
 }
 
-// Ein Schalter mit dem Namen einer Lampe ist ihr An, ein Temperaturfühler mit dem Namen eines Thermostats seine
-// Isttemperatur. Jedes Teil nur einmal, höchstens vier Werte, nie aus zwei verschiedenen Räumen.
+// Ein Schalter zu einer Lampe ist ihr An, ein Temperaturfühler zu einem Thermostat seine Isttemperatur. Jedes Teil nur
+// einmal, höchstens vier Werte und keine Art doppelt, etwa die Leistung zweier Phasen; nie aus zwei Räumen oder zwei
+// Geräten.
 function vereint(a: Gruppe, b: Gruppe): Gruppe | undefined {
-    if (a.raum && b.raum && a.raum !== b.raum) {
+    if ((a.raum && b.raum && a.raum !== b.raum) || (a.geraet && b.geraet && a.geraet.id !== b.geraet.id)) {
         return undefined;
     }
     const typ = a.typ === b.typ ? a.typ : (['lampe', 'thermostat'] as const).find(t => a.typ === t || b.typ === t);
@@ -256,7 +274,7 @@ function vereint(a: Gruppe, b: Gruppe): Gruppe | undefined {
     let teile: Record<string, string>;
     if (typ === 'messwert') {
         const werte = [...Object.values(ta), ...Object.values(tb)];
-        if (werte.length > WERTE_HOECHSTENS) {
+        if (werte.length > WERTE_HOECHSTENS || a.arten.some(x => b.arten.includes(x))) {
             return undefined;
         }
         teile = alsWerte(werte);
@@ -270,37 +288,48 @@ function vereint(a: Gruppe, b: Gruppe): Gruppe | undefined {
                 .map(t => [t, ta[t] ?? tb[t]]),
         );
     }
+    const geraet = a.geraet ?? b.geraet;
     return {
         herkunft: [...a.herkunft, ...b.herkunft],
-        name: a.name,
+        // Aus einem Gerät zusammengefasst, heißt es wie das Gerät, nicht wie einer seiner Kanäle.
+        name: a.geraet && b.geraet ? a.geraet.name : a.name,
         typ,
         teile,
         arten: [...a.arten, ...b.arten],
         raum: a.raum || b.raum,
+        ...(geraet && { geraet }),
     };
 }
 
-// Ein Gerät, das ioBroker nicht als eines kennt, kommt in Teilen, etwa An, Helligkeit und Farbe einer Lampe als
-// einzelne Datenpunkte mit demselben Namen. Teile derselben Instanz mit gleichem Namen werden eins, wo sie sich ergänzen.
+// Teile eines Geräts werden eins, wo sie sich ergänzen: über die ID des Geräts, wenn ioBroker es als eines kennt, sonst
+// über den Namen, etwa An, Helligkeit und Farbe einer Lampe als einzelne Datenpunkte derselben Instanz.
 function zusammengefasst(gruppen: Gruppe[]): Gruppe[] {
+    const schluessel = (g: Gruppe): string[] => [
+        `name ${g.herkunft[0].split('.').slice(0, 2).join('.')} ${g.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`,
+        ...(g.geraet ? [`geraet ${g.geraet.id}`] : []),
+    ];
     const ergebnis: Gruppe[] = [];
     const offen = new Map<string, number[]>();
     for (const g of gruppen) {
-        const instanz = g.herkunft[0].split('.').slice(0, 2).join('.');
-        const schluessel = `${instanz} ${g.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`;
-        const stellen = offen.get(schluessel) ?? [];
-        const stelle = stellen.find(i => vereint(ergebnis[i], g));
-        if (stelle === undefined) {
-            offen.set(schluessel, [...stellen, ergebnis.push(g) - 1]);
-        } else {
-            ergebnis[stelle] = vereint(ergebnis[stelle], g)!;
+        const stelle = schluessel(g)
+            .flatMap(s => offen.get(s) ?? [])
+            .find(i => vereint(ergebnis[i], g));
+        const i = stelle ?? ergebnis.push(g) - 1;
+        if (stelle !== undefined) {
+            ergebnis[i] = vereint(ergebnis[i], g)!;
+        }
+        for (const s of schluessel(ergebnis[i])) {
+            const stellen = offen.get(s) ?? [];
+            if (!stellen.includes(i)) {
+                offen.set(s, [...stellen, i]);
+            }
         }
     }
     return ergebnis;
 }
 
 /**
- * Was davon die Seite anbietet: gleichnamige Teile zusammengefasst; ohne Geräte, die schon in einer Karte stehen, auch
+ * Was davon die Seite anbietet: Teile eines Geräts zusammengefasst; ohne Geräte, die schon in einer Karte stehen, auch
  * über einen Alias; ohne Teile, deren Datenpunkt nicht passt; ohne Karten, die auf keinem Handy erschienen. Raum ist der
  * erste in der Folge der App, der das Gerät oder einen seiner Datenpunkte enthält.
  */
@@ -323,6 +352,7 @@ export function vorschlaege(
         teile: e.teile,
         arten: [e.art],
         raum: raumVon([e.herkunft, ...Object.values(e.teile).flatMap(mitZielen)], o.raeume),
+        ...(e.geraet && { geraet: e.geraet }),
     }));
     const ergebnis: Vorschlag[] = [];
     const alleGruppen = zusammengefasst(gruppen);

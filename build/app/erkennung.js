@@ -74,6 +74,10 @@ function eltern(id) {
   const teile = id.split(".");
   return teile.slice(1, -1).map((_, i) => teile.slice(0, teile.length - 1 - i).join("."));
 }
+const geraetVon = (herkunft, objekte) => [herkunft, ...eltern(herkunft)].find((x) => {
+  var _a;
+  return ((_a = objekte[x]) == null ? void 0 : _a.type) === "device";
+});
 function erkenneGeraete(objekte, o) {
   var _a;
   const fremd = [
@@ -121,10 +125,17 @@ function erkenneGeraete(objekte, o) {
           return ((_a2 = nutzbar[e]) == null ? void 0 : _a2.type) === "channel" && (0, import_rechte.liegtUnter)(e, id) && dps.every((dp) => (0, import_rechte.liegtUnter)(dp, e));
         }
       );
-      ergebnis.push({ herkunft: kanal != null ? kanal : id, typ: ZUORDNUNG[steuerung.type].typ, teile, art: steuerung.type });
+      const herkunft = kanal != null ? kanal : id;
+      ergebnis.push({
+        herkunft,
+        typ: ZUORDNUNG[steuerung.type].typ,
+        teile,
+        art: steuerung.type,
+        geraet: geraetVon(herkunft, nutzbar)
+      });
     }
   }
-  return benenne(ohneDoppelteAliase(ergebnis, nutzbar), nutzbar, o.sprache);
+  return benenne(ohneEinstellungen(ohneDoppelteAliase(ergebnis, nutzbar), nutzbar), nutzbar, o.sprache);
 }
 function teileAus(steuerung) {
   const z = ZUORDNUNG[steuerung.type];
@@ -143,26 +154,16 @@ function teileAus(steuerung) {
 function benenne(liste, objekte, sprache) {
   const name = (id) => {
     var _a;
-    return (0, import_rechte.text)((_a = objekte[id]) == null ? void 0 : _a.common.name, sprache, id.slice(id.lastIndexOf(".") + 1)).trim();
+    return ((0, import_rechte.text)((_a = objekte[id]) == null ? void 0 : _a.common.name, sprache, id.slice(id.lastIndexOf(".") + 1)).trim() || id).slice(0, import_rechte.NAME_LAENGE);
   };
-  const geraete = liste.map(
-    (e) => {
-      var _a;
-      return ((_a = objekte[e.herkunft]) == null ? void 0 : _a.type) === "device" ? e.herkunft : eltern(e.herkunft).find((x) => {
-        var _a2;
-        return ((_a2 = objekte[x]) == null ? void 0 : _a2.type) === "device";
-      });
-    }
-  );
-  return liste.map((e, i) => {
-    const geraet = geraete[i];
+  return liste.map(({ geraet, ...e }) => {
     const eigener = name(e.herkunft);
-    let gesamt = eigener;
-    if (geraet && geraet !== e.herkunft) {
-      const gname = name(geraet);
-      gesamt = geraete.filter((g) => g === geraet).length === 1 ? gname : eigener.startsWith(gname) ? eigener : `${gname} ${eigener}`;
+    if (!geraet) {
+      return { ...e, name: eigener };
     }
-    return { ...e, name: (gesamt || e.herkunft).slice(0, import_rechte.NAME_LAENGE) };
+    const gname = name(geraet);
+    const gesamt = geraet === e.herkunft || liste.filter((x) => x.geraet === geraet).length === 1 ? gname : eigener.startsWith(gname) ? eigener : `${gname} ${eigener}`;
+    return { ...e, name: gesamt.slice(0, import_rechte.NAME_LAENGE), geraet: { id: geraet, name: gname } };
   });
 }
 function ohneDoppelteAliase(liste, objekte) {
@@ -173,6 +174,14 @@ function ohneDoppelteAliase(liste, objekte) {
     })
   );
   return liste.filter((e) => (0, import_rechte.liegtUnter)(e.herkunft, "alias") || !Object.values(e.teile).every((dp) => ziele.has(dp)));
+}
+function ohneEinstellungen(liste, objekte) {
+  const allgemein = (e) => {
+    var _a, _b;
+    return e.typ === "schalter" && ((_b = (_a = objekte[e.teile.schalten]) == null ? void 0 : _a.common) == null ? void 0 : _b.role) === "state";
+  };
+  const bestimmt = new Set(liste.filter((e) => e.geraet && !allgemein(e)).map((e) => e.geraet));
+  return liste.filter((e) => !allgemein(e) || !bestimmt.has(e.geraet));
 }
 function teileAls(g, typ) {
   if (g.typ === typ || typ === "lampe" && g.typ === "schalter") {
@@ -185,7 +194,8 @@ function teileAls(g, typ) {
   return void 0;
 }
 function vereint(a, b) {
-  if (a.raum && b.raum && a.raum !== b.raum) {
+  var _a;
+  if (a.raum && b.raum && a.raum !== b.raum || a.geraet && b.geraet && a.geraet.id !== b.geraet.id) {
     return void 0;
   }
   const typ = a.typ === b.typ ? a.typ : ["lampe", "thermostat"].find((t) => a.typ === t || b.typ === t);
@@ -197,7 +207,7 @@ function vereint(a, b) {
   let teile;
   if (typ === "messwert") {
     const werte = [...Object.values(ta), ...Object.values(tb)];
-    if (werte.length > WERTE_HOECHSTENS) {
+    if (werte.length > WERTE_HOECHSTENS || a.arten.some((x) => b.arten.includes(x))) {
       return void 0;
     }
     teile = alsWerte(werte);
@@ -207,36 +217,48 @@ function vereint(a, b) {
     }
     teile = Object.fromEntries(
       Object.keys(import_rechte.KARTENARTEN[typ].teile).filter((t) => {
-        var _a;
-        return (_a = ta[t]) != null ? _a : tb[t];
+        var _a2;
+        return (_a2 = ta[t]) != null ? _a2 : tb[t];
       }).map((t) => {
-        var _a;
-        return [t, (_a = ta[t]) != null ? _a : tb[t]];
+        var _a2;
+        return [t, (_a2 = ta[t]) != null ? _a2 : tb[t]];
       })
     );
   }
+  const geraet = (_a = a.geraet) != null ? _a : b.geraet;
   return {
     herkunft: [...a.herkunft, ...b.herkunft],
-    name: a.name,
+    // Aus einem Gerät zusammengefasst, heißt es wie das Gerät, nicht wie einer seiner Kanäle.
+    name: a.geraet && b.geraet ? a.geraet.name : a.name,
     typ,
     teile,
     arten: [...a.arten, ...b.arten],
-    raum: a.raum || b.raum
+    raum: a.raum || b.raum,
+    ...geraet && { geraet }
   };
 }
 function zusammengefasst(gruppen) {
   var _a;
+  const schluessel = (g) => [
+    `name ${g.herkunft[0].split(".").slice(0, 2).join(".")} ${g.name.trim().replace(/\s+/g, " ").toLocaleLowerCase()}`,
+    ...g.geraet ? [`geraet ${g.geraet.id}`] : []
+  ];
   const ergebnis = [];
   const offen = /* @__PURE__ */ new Map();
   for (const g of gruppen) {
-    const instanz = g.herkunft[0].split(".").slice(0, 2).join(".");
-    const schluessel = `${instanz} ${g.name.trim().replace(/\s+/g, " ").toLocaleLowerCase()}`;
-    const stellen = (_a = offen.get(schluessel)) != null ? _a : [];
-    const stelle = stellen.find((i) => vereint(ergebnis[i], g));
-    if (stelle === void 0) {
-      offen.set(schluessel, [...stellen, ergebnis.push(g) - 1]);
-    } else {
-      ergebnis[stelle] = vereint(ergebnis[stelle], g);
+    const stelle = schluessel(g).flatMap((s) => {
+      var _a2;
+      return (_a2 = offen.get(s)) != null ? _a2 : [];
+    }).find((i2) => vereint(ergebnis[i2], g));
+    const i = stelle != null ? stelle : ergebnis.push(g) - 1;
+    if (stelle !== void 0) {
+      ergebnis[i] = vereint(ergebnis[i], g);
+    }
+    for (const s of schluessel(ergebnis[i])) {
+      const stellen = (_a = offen.get(s)) != null ? _a : [];
+      if (!stellen.includes(i)) {
+        offen.set(s, [...stellen, i]);
+      }
     }
   }
   return ergebnis;
@@ -253,7 +275,8 @@ function vorschlaege(erkannt, o) {
     typ: e.typ,
     teile: e.teile,
     arten: [e.art],
-    raum: raumVon([e.herkunft, ...Object.values(e.teile).flatMap(mitZielen)], o.raeume)
+    raum: raumVon([e.herkunft, ...Object.values(e.teile).flatMap(mitZielen)], o.raeume),
+    ...e.geraet && { geraet: e.geraet }
   }));
   const ergebnis = [];
   const alleGruppen = zusammengefasst(gruppen);

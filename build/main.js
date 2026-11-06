@@ -24,6 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var utils = __toESM(require("@iobroker/adapter-core"));
 var import_gemeinsam_schema = __toESM(require("../protokoll/v1/gemeinsam.schema.json"));
 var import_geraete = require("./admin/geraete");
+var import_fernseite = require("./admin/fernseite");
 var import_kartenseite = require("./admin/kartenseite");
 var import_profilseite = require("./admin/profilseite");
 var import_raumseite = require("./admin/raumseite");
@@ -38,6 +39,7 @@ var import_zertifikat = require("./basis/zertifikat");
 var import_einstellungen = require("./einstellungen");
 var import_heimnetz = require("./zugang/heimnetz");
 const IDENTITAET = "identitaet";
+const FERNZUGANG = "fernzugang";
 const pruefeAdapterId = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/adapterId` }, [import_gemeinsam_schema.default]);
 class MyzelApp extends utils.Adapter {
   server;
@@ -56,8 +58,11 @@ class MyzelApp extends utils.Adapter {
       return (_a = this.server) == null ? void 0 : _a.geaendert(id, state);
     });
     this.on("objectChange", (id, objekt) => {
-      var _a;
-      return (_a = this.katalog) == null ? void 0 : _a.geaendert(id, objekt);
+      var _a, _b, _c;
+      (_a = this.katalog) == null ? void 0 : _a.geaendert(id, objekt);
+      if ((0, import_objekte.appIdAus)(this.namespace, id)) {
+        (_c = (_b = this.server) == null ? void 0 : _b.fern) == null ? void 0 : _c.appsGeaendert();
+      }
     });
     this.on("message", (obj) => void this.beantworte(obj));
     this.on("unload", this.onUnload.bind(this));
@@ -76,7 +81,8 @@ class MyzelApp extends utils.Adapter {
     this.seiten = [
       [import_kartenseite.KARTENBEFEHLE, new import_kartenseite.Kartenseite(seite)],
       [import_profilseite.PROFILBEFEHLE, new import_profilseite.Profilseite(seite)],
-      [import_raumseite.RAUMBEFEHLE, new import_raumseite.Raumseite(seite)]
+      [import_raumseite.RAUMBEFEHLE, new import_raumseite.Raumseite(seite)],
+      [import_fernseite.FERNBEFEHLE, new import_fernseite.Fernseite({ namespace: this.namespace, betrieb: () => this.fernbetrieb() })]
     ];
     try {
       await this.starte();
@@ -86,6 +92,7 @@ class MyzelApp extends utils.Adapter {
   }
   async starte() {
     await this.setStateAsync("info.connection", false, true);
+    await this.setStateAsync("info.fernzugang", false, true);
     const fehler = (0, import_einstellungen.pruefeEinstellungen)(this.config);
     if (fehler.length > 0) {
       this.log.error(`Einstellungen ung\xFCltig, der Server startet nicht: ${fehler.join("; ")}`);
@@ -126,7 +133,9 @@ class MyzelApp extends utils.Adapter {
       zustand: (laeuft) => void this.setStateAsync("info.connection", laeuft, true),
       nachlaufMs: this.config.nachlaufMin * 6e4,
       textLaenge: this.config.textLaenge,
-      hinweisFristMs: this.config.hinweisFristMin * 6e4
+      hinweisFristMs: this.config.hinweisFristMin * 6e4,
+      fernablage: { lies: () => this.liesFernzugang(), schreibe: (e) => this.schreibeFernzugang(e) },
+      fernVerbunden: (ja) => void this.setStateAsync("info.fernzugang", ja, true)
     });
     if (this.beendet) {
       await server.beende();
@@ -165,6 +174,13 @@ class MyzelApp extends utils.Adapter {
       antwort = { fehler: "gescheitert", einzelheiten: [fehler.message] };
     }
     this.sendTo(obj.from, obj.command, antwort != null ? antwort : null, obj.callback);
+  }
+  fernbetrieb() {
+    var _a;
+    const fern = (_a = this.server) == null ? void 0 : _a.fern;
+    const b = this.betrieb;
+    const katalog = this.katalog;
+    return fern && b && katalog ? { fern, ablage: b.ablage, verbindungen: () => b.dienst.verbindungen(), sprache: katalog.sprache } : void 0;
   }
   async adminOhneAnmeldung() {
     const praefix = "system.adapter.admin.";
@@ -207,11 +223,33 @@ class MyzelApp extends utils.Adapter {
     }
     return gespeichert;
   }
+  // Eigenes Objekt wie identitaet, aus demselben Grund. Ein unbrauchbares Geheimnis gilt als fehlend und wird neu erzeugt.
+  async liesFernzugang() {
+    var _a;
+    const n = (_a = await this.getObjectAsync(FERNZUGANG)) == null ? void 0 : _a.native;
+    if (typeof (n == null ? void 0 : n.adresse) !== "string" || typeof n.geheimnis !== "string") {
+      return void 0;
+    }
+    const geheimnis = this.decrypt(n.geheimnis);
+    if (!/^[A-Za-z0-9_-]{43}$/.test(geheimnis)) {
+      this.log.warn(`Geheimnis in ${this.namespace}.${FERNZUGANG} unbrauchbar, wird neu erzeugt`);
+      return void 0;
+    }
+    return { adresse: n.adresse, geheimnis };
+  }
+  async schreibeFernzugang(e) {
+    await this.setObjectAsync(FERNZUGANG, {
+      type: "config",
+      common: { name: { de: "Fernzugang \xFCber den Vermittler", en: "Remote access via relay" } },
+      native: { adresse: e.adresse, geheimnis: this.encrypt(e.geheimnis) }
+    });
+  }
   onUnload(callback) {
     var _a, _b;
     try {
       this.beendet = true;
       void this.setState("info.connection", false, true);
+      void this.setState("info.fernzugang", false, true);
       ((_b = (_a = this.server) == null ? void 0 : _a.beende()) != null ? _b : Promise.resolve()).catch((fehler) => this.log.error(`Fehler beim Beenden: ${fehler.message}`)).finally(callback);
     } catch (error) {
       this.log.error(`Fehler beim Beenden: ${error.message}`);

@@ -29,8 +29,11 @@ export class Gegenstelle {
     private wartend?: () => void;
     private hoerer?: (nachricht: Eingang) => void;
     public readonly schluss: Promise<Schluss>;
+    // Wie oft der Adapter gepingt hat
+    public pings = 0;
 
     private constructor(private readonly ws: WebSocket) {
+        ws.on('ping', () => this.pings++);
         ws.on('message', daten => {
             const nachricht = JSON.parse((daten as Buffer).toString('utf8'));
             const fehler = pruefer.pruefe(nachricht);

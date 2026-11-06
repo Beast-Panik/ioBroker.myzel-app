@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myzel.local/protokoll/app/v1/gemeinsam.schema.json",
-  "title": "Gemeinsame Bausteine, Protokoll myzel-app Version 3 bis 5",
+  "title": "Gemeinsame Bausteine, Protokoll myzel-app Version 3 bis 6",
   "$defs": {
     "version": {
-      "description": "Protokollversion. Die App sendet die neueste, die sie kennt; der Adapter antwortet in dieser oder lehnt mit fehler version ab. 3 bringt die Karten statt einzelner Datenpunkte, 4 die Nachricht auswahl, 5 die Etagen und die feste Reihenfolge der Räume",
-      "enum": [3, 4, 5]
+      "description": "Protokollversion. Die App sendet die neueste, die sie kennt; der Adapter antwortet in dieser oder lehnt mit fehler version ab. 3 bringt die Karten statt einzelner Datenpunkte, 4 die Nachricht auswahl, 5 die Etagen und die feste Reihenfolge der Räume, 6 den Fernzugang über einen Vermittler",
+      "enum": [3, 4, 5, 6]
     },
     "kennung": {
       "description": "ID von Profilen, Karten und Etagen",
@@ -56,6 +56,17 @@
       "type": "string",
       "maxLength": 270,
       "pattern": "^(\\[[0-9a-fA-F:]+\\]|[A-Za-z0-9.-]+):[0-9]{1,5}$"
+    },
+    "vermittler": {
+      "description": "Basisadresse des Vermittlers für den Fernzugang, nur HTTPS mit Namen, ohne Abfrage und Anker",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$"
+    },
+    "vermittlerschluessel": {
+      "description": "Schlüssel einer App beim Vermittler, 256 Bit base64url; öffnet nur den Vermittler, nie den Adapter",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
     },
     "geraet": {
       "type": "object",

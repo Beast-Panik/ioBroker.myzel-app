@@ -4,7 +4,8 @@ import appAnAdapter from '../../protokoll/v1/app-an-adapter.schema.json';
 import gemeinsam from '../../protokoll/v1/gemeinsam.schema.json';
 import type { Anmeldeziel, Hallo, Zugangspruefung } from '../basis/anmeldung';
 import { GRENZEN, type Grenzen, type Protokoll } from '../basis/grenzen';
-import { SCHLIESSCODE, type Verbindung } from '../basis/kern';
+import { SCHLIESSCODE, type Verbindung, type Weg } from '../basis/kern';
+import { appSchluessel } from '../basis/fernschluessel';
 import { neueAppId, neuerZugang, passtZuHash, sha256 } from '../basis/kodierung';
 import type { Kopplung, Kopplungsanfrage } from '../basis/kopplung';
 import { Nachrichtenpruefer } from '../basis/schema';
@@ -12,7 +13,7 @@ import { Anwesenheit, Handyeingang } from './handydaten';
 import { Hinweise } from './hinweise';
 import type { Katalog } from './katalog';
 import { type AppDaten, type Appablage, appIdAus } from './objekte';
-import { type Rechtestand, inhaltFuer, rechteFuer } from './rechte';
+import { FERN_SEIT, type Rechtestand, inhaltFuer, rechteFuer } from './rechte';
 import { Sitzung } from './sitzung';
 import { Abostelle, type Wert, Werteversand, type Zustandsquelle } from './werte';
 
@@ -44,6 +45,21 @@ export interface DienstOptionen {
     hinweisFristMs: number;
     grenzen?: Grenzen;
     neuberechnungMs?: number;
+    // Vermittler und Geheimnis, wenn eine Adresse eingetragen ist
+    fernzugang?: () => Fernzugang | undefined;
+}
+
+export interface Fernzugang {
+    adresse: string;
+    geheimnis: string;
+}
+
+// Was eine freigegebene App in willkommen und rechte bekommt (adapter-an-app.schema.json, rechteInhalt.fern)
+interface Ferndaten {
+    adresse: string;
+    schluessel: string;
+    pingS: number;
+    totS: number;
 }
 
 interface Angemeldet {
@@ -52,6 +68,7 @@ interface Angemeldet {
     handy: Handyeingang;
     zugangHash: string;
     version: number;
+    fern?: Ferndaten;
 }
 
 export class Dienst implements Anmeldeziel {
@@ -73,6 +90,16 @@ export class Dienst implements Anmeldeziel {
             verbindung: appId => this.sitzungen.get(appId)?.sitzung.verbindung,
         });
         o.katalog.beiAenderung(() => this.vormerken());
+    }
+
+    // Adresse oder Geheimnis des Fernzugangs neu: Jede App bekommt den neuen Stand wie bei neuen Rechten.
+    public fernzugangGeaendert(): void {
+        this.vormerken();
+    }
+
+    // Weg je angemeldeter App
+    public verbindungen(): Map<string, Weg> {
+        return new Map([...this.sitzungen].map(([appId, a]) => [appId, a.sitzung.verbindung.herkunft.weg]));
     }
 
     public geaendert(id: string, state: ioBroker.State | null | undefined): void {
@@ -220,7 +247,8 @@ export class Dienst implements Anmeldeziel {
             grenzen: this.o.grenzen,
         });
         const alt = this.sitzungen.get(appId);
-        this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version });
+        const fern = this.fernFuer(appId, daten, version);
+        this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version, fern });
         if (alt) {
             this.o.log.info(`App ${appId}: neue Verbindung ersetzt die bisherige`);
             alt.sitzung.verbindung.schliesse(SCHLIESSCODE.ersetzt, 'ersetzt');
@@ -242,6 +270,7 @@ export class Dienst implements Anmeldeziel {
             adressen,
             ...inhaltFuer(rechte.inhalt, version),
             handydaten: daten.handydaten,
+            ...(fern && { fern }),
         });
         this.o.log.info(`App ${appId} verbunden über ${v.herkunft.weg} von ${v.herkunft.adresse}`);
         await this.o.ablage.schreibe(appId, { online: true, weg: v.herkunft.weg });
@@ -275,12 +304,19 @@ export class Dienst implements Anmeldeziel {
                 sitzung.verbindung.schliesse(SCHLIESSCODE.entfernt, 'entfernt');
                 continue;
             }
+            const fern = this.fernFuer(appId, daten, angemeldet.version);
+            if (sitzung.verbindung.herkunft.weg === 'fern' && !fern) {
+                this.o.log.info(`App ${appId}: Fernzugang ausgeschaltet, Verbindung über den Vermittler beendet`);
+                sitzung.verbindung.schliesse(SCHLIESSCODE.fernAus, 'Fernzugang aus');
+                continue;
+            }
             const rechte = jeProfil.get(daten.profil) ?? rechteFuer(daten.profil, this.o.katalog);
             jeProfil.set(daten.profil, rechte);
             // Verglichen wird, was die App bekäme: Eine neue Etage ändert für eine App vor Protokoll 5 nichts.
             const fuerApp = inhaltFuer(rechte.inhalt, angemeldet.version);
             const rechteNeu = !isDeepStrictEqual(fuerApp, inhaltFuer(werte.rechte.inhalt, angemeldet.version));
-            if (!rechteNeu && isDeepStrictEqual(daten.handydaten, handy.handydaten)) {
+            const fernNeu = !isDeepStrictEqual(fern, angemeldet.fern);
+            if (!rechteNeu && !fernNeu && isDeepStrictEqual(daten.handydaten, handy.handydaten)) {
                 continue;
             }
             if (rechteNeu) {
@@ -289,9 +325,24 @@ export class Dienst implements Anmeldeziel {
                     .catch((fehler: Error) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
             }
             handy.handydaten = daten.handydaten;
-            sitzung.verbindung.sende({ t: 'rechte', ...fuerApp, handydaten: daten.handydaten });
+            angemeldet.fern = fern;
+            sitzung.verbindung.sende({ t: 'rechte', ...fuerApp, handydaten: daten.handydaten, ...(fern && { fern }) });
             this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
         }
+    }
+
+    private fernFuer(appId: string, daten: AppDaten, version: number): Ferndaten | undefined {
+        const zugang = this.o.fernzugang?.();
+        if (version < FERN_SEIT || !zugang || daten.fern !== true) {
+            return undefined;
+        }
+        const grenzen = this.o.grenzen ?? GRENZEN;
+        return {
+            adresse: zugang.adresse,
+            schluessel: appSchluessel(zugang.geheimnis, appId, daten.zugangHash),
+            pingS: grenzen.fernPingMs / 1000,
+            totS: grenzen.fernTotMs / 1000,
+        };
     }
 
     private getrennt(sitzung: Sitzung): void {

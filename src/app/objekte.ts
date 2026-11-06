@@ -18,6 +18,8 @@ export interface AppDaten {
     handydaten: Handydaten;
     gekoppeltAm: number;
     geraet: Geraet;
+    // Fernzugang über den Vermittler freigegeben; fehlt bei Apps aus der Zeit davor
+    fern?: boolean;
 }
 
 export interface Hinweis {
@@ -184,7 +186,8 @@ function alsAppDaten(n: Record<string, any>): AppDaten | undefined {
         istJaNein(h?.anruf) &&
         istJaNein(h?.benachrichtigung) &&
         istText(g?.android) &&
-        istText(g?.appVersion);
+        istText(g?.appVersion) &&
+        (n.fern === undefined || istJaNein(n.fern));
     // Weitere Felder in handydaten gingen sonst an die App, deren Schema keine erlaubt.
     return gueltig
         ? ({ ...n, handydaten: { akku: h.akku, anruf: h.anruf, benachrichtigung: h.benachrichtigung } } as AppDaten)

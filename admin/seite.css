@@ -473,7 +473,8 @@ input[aria-invalid='true'] {
 }
 
 /* Die Frage steht über den Knöpfen, die Knöpfe rechts wie sonst */
-#loeschfrageText {
+#loeschfrageText,
+#schluesselfrageText {
     flex-basis: 100%;
 }
 
@@ -675,4 +676,93 @@ input[aria-invalid='true'] {
         grid-column: 2;
         margin: 6px 0 0 38px;
     }
+}
+
+/* Seite des Fernzugangs (KONZEPT-FERNZUGANG.md, Abschnitt 12) */
+#schluesselfrage {
+    max-width: 720px;
+    margin-top: 14px;
+}
+
+.adresszeile {
+    align-items: flex-end;
+}
+
+.adresszeile .feld {
+    flex: 1 1 320px;
+}
+
+.stand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 0;
+}
+
+.punkt {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--leise);
+    flex: none;
+}
+
+.punkt.gut {
+    background: #2e9d5b;
+}
+
+.punkt.schlecht {
+    background: var(--fehler);
+}
+
+.konfigzeile {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.konfigzeile code {
+    flex: 1 1 320px;
+    padding: 8px 10px;
+    border: 1px solid var(--rand);
+    border-radius: 6px;
+    background: var(--flaeche);
+    font:
+        12.5px/1.5 ui-monospace,
+        'Roboto Mono',
+        monospace;
+    overflow-wrap: anywhere;
+}
+
+.erklaerung code {
+    font-size: 12.5px;
+}
+
+.fernapps {
+    margin-top: 8px;
+    max-width: 720px;
+}
+
+.fernapps .rechts {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.fernapps input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--haupt);
+}
+
+.appstand {
+    color: var(--leise);
+    font-size: 12px;
+}
+
+.appstand.unterwegs {
+    color: var(--haupt);
 }

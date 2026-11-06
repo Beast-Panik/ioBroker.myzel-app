@@ -44,7 +44,7 @@ const ungueltigAnAdapter: [string, Record<string, unknown>][] = [
     ['Akku 101', { t: 'akku', stand: 101, laedt: false, zeit }],
     ['Leerzeichen in Rufnummer', { t: 'anruf', status: 'klingelt', nummer: '030 123', zeit }],
     ['Schrägstrich im Paketnamen', { t: 'benachrichtigung', app: 'X', paket: '../etc', zeit }],
-    ['Version 6', { t: 'hallo', v: 6, app: 'abcdefgh', zugang, geraet }],
+    ['Version 7', { t: 'hallo', v: 7, app: 'abcdefgh', zugang, geraet }],
     ['Auswahl mit Schrägstrich im Paketnamen', { t: 'auswahl', apps: [{ paket: '../etc', app: 'X' }] }],
     ['Auswahl ohne Namen', { t: 'auswahl', apps: [{ paket: 'org.signal' }] }],
     ['Auswahl mit leerem Namen', { t: 'auswahl', apps: [{ paket: 'org.signal', app: '' }] }],

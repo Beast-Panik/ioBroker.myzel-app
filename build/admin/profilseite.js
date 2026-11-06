@@ -97,7 +97,7 @@ class Profilseite {
     const apps = await this.appsJeProfil();
     return {
       sprache,
-      raeume: katalog.raeume().map((r) => ({ id: r.id, name: (0, import_rechte.text)(r.name, sprache, r.id) })),
+      raeume: (0, import_eintraege.raeumeFuerSeiten)(katalog),
       karten: katalog.karten().map(([id, k]) => ({
         id,
         name: k.name,

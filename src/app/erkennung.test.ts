@@ -158,6 +158,45 @@ describe('Erkennung von Geräten', () => {
         expect(e.some(x => x.herkunft === 'zigbee.0.00158d000aa11bb2')).to.equal(false);
         expect(e.find(x => x.herkunft === 'alias.0.Fenster')?.teile).to.deep.equal({ wert1: 'alias.0.Fenster.offen' });
     });
+
+    it('lässt Einstellungen aus, die der Erkenner neben etwas Bestimmterem aus demselben Gerät für Schalter hält', () => {
+        const tv = 'zigbee.0.781c9dfffe59454e';
+        const objekte = {
+            ...OBJEKTE,
+            ...Object.fromEntries([
+                // Wie Zigbee eine Lampe mit Farboptionen anlegt: die Option als Kanal c_color_options
+                geraet(tv, 'Wohnzimmer.TV'),
+                zustand(`${tv}.state`, 'switch', 'boolean', { write: true }),
+                zustand(`${tv}.brightness`, 'level.dimmer', 'number', { write: true, min: 0, max: 100 }),
+                zustand(`${tv}.color`, 'level.color.rgb', 'string', { write: true }),
+                kanal(`${tv}.c_color_options`, 'c_color_options'),
+                zustand(`${tv}.c_color_options.execute_if_off`, 'state', 'boolean', { write: true, read: false }),
+                geraet('zigbee.0.thermostat', 'Heizung Bad'),
+                zustand('zigbee.0.thermostat.window_detection', 'state', 'boolean', { write: true }),
+                zustand('zigbee.0.thermostat.current_heating_setpoint', 'level.temperature', 'number', {
+                    write: true,
+                }),
+                // Nur allgemeine Schalter: zwei Relais, beide bleiben
+                geraet('esphome.0.relais', 'Relais'),
+                kanal('esphome.0.relais.eins', 'Eins'),
+                zustand('esphome.0.relais.eins.an', 'state', 'boolean', { write: true }),
+                kanal('esphome.0.relais.zwei', 'Zwei'),
+                zustand('esphome.0.relais.zwei.an', 'state', 'boolean', { write: true }),
+            ]),
+        };
+        const e = erkenne(objekte);
+        const aus = (praefix: string): string[][] =>
+            e
+                .filter(x => x.herkunft.startsWith(praefix))
+                .map(x => [x.herkunft, x.name, x.typ])
+                .sort();
+        expect(aus(tv)).to.deep.equal([[tv, 'Wohnzimmer.TV', 'lampe']]);
+        expect(aus('zigbee.0.thermostat')).to.deep.equal([['zigbee.0.thermostat', 'Heizung Bad', 'thermostat']]);
+        expect(aus('esphome.')).to.deep.equal([
+            ['esphome.0.relais.eins', 'Relais Eins', 'schalter'],
+            ['esphome.0.relais.zwei', 'Relais Zwei', 'schalter'],
+        ]);
+    });
 });
 
 describe('Vorschläge aus der Erkennung', () => {
@@ -362,6 +401,74 @@ describe('Vorschläge aus der Erkennung', () => {
                 { name: 'Flur', typ: 'schalter', raum: '', teile: { schalten: '0_userdata.0.flur.an' } },
             ];
             expect(nur(vorschlagFuer(karten, [], TEILE), '0_userdata.')).to.deep.equal([]);
+        });
+    });
+
+    describe('Teile eines Geräts', () => {
+        const nur = (v: Vorschlag[], praefix: string): string[][] =>
+            v
+                .filter(x => x.herkunft.some(h => h.startsWith(praefix)))
+                .map(x => [x.karte.name, ...x.herkunft])
+                .sort();
+
+        it('fasst Teile aus mehreren Kanälen eines Geräts zusammen, unter dem Namen des Geräts', () => {
+            const objekte = {
+                ...OBJEKTE,
+                ...Object.fromEntries([
+                    geraet('hm-rpc.0.LEQ01', 'Esstisch'),
+                    kanal('hm-rpc.0.LEQ01.1', 'Esstisch:1'),
+                    zustand('hm-rpc.0.LEQ01.1.STATE', 'switch.light', 'boolean', { write: true }),
+                    kanal('hm-rpc.0.LEQ01.2', 'Esstisch:2'),
+                    zustand('hm-rpc.0.LEQ01.2.LEVEL', 'level.dimmer', 'number', { write: true, min: 0, max: 100 }),
+                ]),
+            };
+            const [lampe, ...mehr] = vorschlagFuer([], [], objekte).filter(v => v.karte.name.startsWith('Esstisch'));
+            expect(mehr).to.deep.equal([]);
+            expect(lampe.herkunft.sort()).to.deep.equal(['hm-rpc.0.LEQ01.1', 'hm-rpc.0.LEQ01.2']);
+            expect(lampe.karte).to.deep.equal({
+                name: 'Esstisch',
+                typ: 'lampe',
+                raum: '',
+                teile: { schalten: 'hm-rpc.0.LEQ01.1.STATE', helligkeit: 'hm-rpc.0.LEQ01.2.LEVEL' },
+            });
+        });
+
+        it('lässt Gleiches aus einem Gerät getrennt, etwa zwei Relais oder die Leistung zweier Phasen', () => {
+            const objekte = {
+                ...OBJEKTE,
+                ...Object.fromEntries([
+                    zustand('shelly.0.SHPLG-S#A1B2C3#1.Relay1.Switch', 'switch', 'boolean', { write: true }),
+                    kanal('shelly.0.SHPLG-S#A1B2C3#1.Relay1', 'Relay1'),
+                    geraet('shelly.0.SHEM-3#D4E5F6#1', 'Zähler'),
+                    kanal('shelly.0.SHEM-3#D4E5F6#1.Emeter0', 'Phase 1'),
+                    zustand('shelly.0.SHEM-3#D4E5F6#1.Emeter0.Power', 'value.power', 'number', { unit: 'W' }),
+                    kanal('shelly.0.SHEM-3#D4E5F6#1.Emeter1', 'Phase 2'),
+                    zustand('shelly.0.SHEM-3#D4E5F6#1.Emeter1.Power', 'value.power', 'number', { unit: 'W' }),
+                ]),
+            };
+            expect(nur(vorschlagFuer([], [], objekte), 'shelly.')).to.deep.equal([
+                ['Shelly Plug S Relay0', 'shelly.0.SHPLG-S#A1B2C3#1.Relay0'],
+                ['Shelly Plug S Relay1', 'shelly.0.SHPLG-S#A1B2C3#1.Relay1'],
+                ['Zähler Phase 1', 'shelly.0.SHEM-3#D4E5F6#1.Emeter0'],
+                ['Zähler Phase 2', 'shelly.0.SHEM-3#D4E5F6#1.Emeter1'],
+            ]);
+        });
+
+        it('fasst zwei Geräte nie zusammen, auch nicht mit gleichem Namen', () => {
+            const objekte = {
+                ...OBJEKTE,
+                ...Object.fromEntries([
+                    geraet('zigbee.0.schalter', 'Flur'),
+                    zustand('zigbee.0.schalter.state', 'switch.light', 'boolean', { write: true }),
+                    geraet('zigbee.0.birne', 'Flur'),
+                    zustand('zigbee.0.birne.brightness', 'level.dimmer', 'number', { write: true, min: 0, max: 100 }),
+                ]),
+            };
+            expect(nur(vorschlagFuer([], [], objekte), 'zigbee.0.')).to.deep.include.members([
+                ['Flur', 'zigbee.0.birne'],
+                ['Flur', 'zigbee.0.schalter'],
+            ]);
+            expect(nur(vorschlagFuer([], [], objekte), 'zigbee.0.').filter(x => x[0] === 'Flur')).to.have.length(2);
         });
     });
 

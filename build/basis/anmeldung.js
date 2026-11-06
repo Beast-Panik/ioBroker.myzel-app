@@ -54,9 +54,18 @@ class Anmeldung {
     } else if (gelesen.art === "ungueltig") {
       this.lehneAb(v, "ungueltig", gelesen.grund);
     } else if (gelesen.nachricht.t === "hallo") {
-      await this.hallo(v, gelesen.nachricht);
+      const hallo = gelesen.nachricht;
+      if (v.herkunft.weg === "fern" && hallo.app !== v.herkunft.app) {
+        this.lehneAb(v, "zugang", `App ${hallo.app} \xFCber den Fernzugang einer anderen App`);
+      } else {
+        await this.hallo(v, hallo);
+      }
     } else if (gelesen.nachricht.t === "koppeln") {
-      this.koppeln(v, gelesen.nachricht);
+      if (v.herkunft.weg === "fern") {
+        this.lehneAb(v, "zugang", "Koppeln geht nur im Heimnetz");
+      } else {
+        this.koppeln(v, gelesen.nachricht);
+      }
     } else {
       this.lehneAb(v, "ungueltig", `${gelesen.nachricht.t} vor der Anmeldung`);
     }
