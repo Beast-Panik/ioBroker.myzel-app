@@ -1,6 +1,7 @@
 import adapterAnApp from '../../protokoll/v1/adapter-an-app.schema.json';
 import gemeinsam from '../../protokoll/v1/gemeinsam.schema.json';
 import { erstellePruefer } from '../basis/schema';
+import type { Wert } from './werte';
 
 export type Recht = 'lesen' | 'schreiben';
 
@@ -479,18 +480,36 @@ export function kartenmaengel(quelle: Pick<Objektquelle, 'karten' | 'datenpunkt'
 /** Was eine App sehen und schreiben darf, nach KONZEPT-KARTEN.md, Abschnitt 4. */
 export class Rechtestand {
     private readonly rechte = new Map<string, Recht>();
+    // Was die App je Datenpunkt bedienen darf, so wie sie es mit der Karte erfahren hat
+    private readonly grenzen = new Map<string, { min?: number; max?: number; farbe: boolean }[]>();
 
     public constructor(public readonly inhalt: Rechteinhalt) {
         // Steht ein Datenpunkt in mehreren Karten, gilt das höchste Recht.
         for (const karte of inhalt.karten) {
-            for (const t of Object.values(karte.teile)) {
+            for (const [teil, t] of Object.entries(karte.teile)) {
                 this.rechte.set(t.id, hoeher(this.rechte.get(t.id), t.recht));
+                if (t.recht === 'schreiben') {
+                    const liste = this.grenzen.get(t.id) ?? [];
+                    liste.push({ min: t.min, max: t.max, farbe: karte.typ === 'lampe' && teil === 'farbe' });
+                    this.grenzen.set(t.id, liste);
+                }
             }
         }
     }
 
     public recht(id: string): Recht | undefined {
         return this.rechte.get(id);
+    }
+
+    // Passt der Wert zu einer der Karten, über die die App den Datenpunkt bedient? Bereiche ohne min und max am
+    // Datenpunkt kommen aus der Kartenart, etwa 5 bis 30 °C; die App bekommt sie genannt, ioBroker kennt sie nicht.
+    public passt(id: string, val: Wert): boolean {
+        return (this.grenzen.get(id) ?? []).some(g => {
+            if (typeof val === 'number') {
+                return (g.min === undefined || val >= g.min) && (g.max === undefined || val <= g.max);
+            }
+            return !g.farbe || (typeof val === 'string' && /^#[0-9A-Fa-f]{6}$/.test(val));
+        });
     }
 
     public get anzahlDatenpunkte(): number {
@@ -503,8 +522,15 @@ export class Rechtestand {
 }
 
 // Anrufe und Benachrichtigungen der Apps gibt nur eine Einzelfreigabe frei: Ein Raum ist dafür zu grob.
+// Handydaten jeder Instanz, nicht nur der eigenen: Mit zwei Instanzen gäbe sonst ein Raum die der anderen frei
+const HANDYDATEN = /^myzel-app\.\d+\.apps(\.|$)/;
+export const istHandydatum = (id: string, eigeneApps: string): boolean =>
+    liegtUnter(id, eigeneApps) || HANDYDATEN.test(id);
+
 export const istPersoenlich = (karte: Karte, quelle: Pick<Objektquelle, 'eigeneApps' | 'datenpunkt'>): boolean =>
-    Object.values(karte.teile).some(dp => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]));
+    Object.values(karte.teile).some(dp =>
+        [dp, ...(quelle.datenpunkt(dp)?.ziele ?? [])].some(i => istHandydatum(i, quelle.eigeneApps)),
+    );
 
 // Was eine App mit diesem Profil sieht: je Karte schreiben, wenn sie ein bedienbares Teil hat, sonst lesen
 export function sicht(profil: Profil, quelle: Objektquelle): Record<string, Recht> {

@@ -72,6 +72,8 @@ class Dienst {
     o.katalog.beiAenderung(() => this.vormerken());
   }
   sitzungen = /* @__PURE__ */ new Map();
+  // Eimer der Anmeldungen je App, nur für Apps mit gültigem Zugang
+  anmeldungen = /* @__PURE__ */ new Map();
   abostelle;
   anwesenheit;
   hinweise;
@@ -93,11 +95,12 @@ class Dienst {
       this.hinweise.neu(hinweisFuer, state);
     }
   }
-  // Beim Start ist keine App verbunden, auch wenn der letzte Lauf das nicht mehr schreiben konnte.
+  // Beim Start ist keine App verbunden, auch wenn der letzte Lauf das nicht mehr schreiben konnte. weg ist leer,
+  // solange die App nicht verbunden ist; sonst zeigte der Gerätemanager den alten Weg.
   async starte() {
     const appIds = await this.o.ablage.alle();
     for (const appId of appIds) {
-      await this.o.ablage.schreibe(appId, { online: false });
+      await this.o.ablage.schreibe(appId, { online: false, weg: "" });
       await this.o.ablage.richteEin(appId);
     }
     await this.anwesenheit.starte(appIds);
@@ -121,6 +124,11 @@ class Dienst {
     return (0, import_kodierung.passtZuHash)(zugang, Buffer.from(daten.zugangHash, "hex")) ? "ok" : "falsch";
   }
   async angemeldet(v, hallo) {
+    if (!this.darfAnmelden(hallo.app, Date.now())) {
+      v.sendeFehler("zuviel");
+      v.schliesse(import_kern.SCHLIESSCODE.zuviel, "zu viele Anmeldungen");
+      return;
+    }
     const daten = await this.o.ablage.lies(hallo.app);
     if (!daten) {
       v.sendeFehler("zugang");
@@ -190,6 +198,12 @@ class Dienst {
       v.schliesse(import_kern.SCHLIESSCODE.intern, "keine Adresse");
       return;
     }
+    const fern = this.fernFuer(appId, daten, version);
+    if (v.herkunft.weg === "fern" && !fern) {
+      this.o.log.info(`App ${appId}: Fernzugang nicht freigegeben, Verbindung \xFCber den Vermittler beendet`);
+      v.schliesse(import_kern.SCHLIESSCODE.fernAus, "Fernzugang aus");
+      return;
+    }
     const rechte = (0, import_rechte.rechteFuer)(daten.profil, this.o.katalog);
     const werte = new import_werte.Werteversand({
       appId,
@@ -223,11 +237,11 @@ class Dienst {
       grenzen: this.o.grenzen
     });
     const alt = this.sitzungen.get(appId);
-    const fern = this.fernFuer(appId, daten, version);
     this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version, fern });
     if (alt) {
       this.o.log.info(`App ${appId}: neue Verbindung ersetzt die bisherige`);
       alt.sitzung.verbindung.schliesse(import_kern.SCHLIESSCODE.ersetzt, "ersetzt");
+      this.anwesenheit.getrennt(appId, alt.sitzung.verbindung.herkunft.weg);
     }
     v.beiTrennung(() => {
       this.getrennt(sitzung);
@@ -300,6 +314,22 @@ class Dienst {
       this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
     }
   }
+  // Eimer je App: anmeldungenStoss sofort, danach eine je anmeldungAbstandMs
+  darfAnmelden(appId, jetzt) {
+    var _a;
+    const g = (_a = this.o.grenzen) != null ? _a : import_grenzen.GRENZEN;
+    const alt = this.anmeldungen.get(appId);
+    const marken = alt ? Math.min(g.anmeldungenStoss, alt.marken + (jetzt - alt.zeit) / g.anmeldungAbstandMs) : g.anmeldungenStoss;
+    if (marken < 1) {
+      this.anmeldungen.set(appId, { marken, zeit: jetzt, gemeldet: true });
+      if (!(alt == null ? void 0 : alt.gemeldet)) {
+        this.o.log.warn(`App ${appId} meldet sich zu oft an, vorerst abgewiesen`);
+      }
+      return false;
+    }
+    this.anmeldungen.set(appId, { marken: marken - 1, zeit: jetzt, gemeldet: false });
+    return true;
+  }
   fernFuer(appId, daten, version) {
     var _a, _b, _c;
     const zugang = (_b = (_a = this.o).fernzugang) == null ? void 0 : _b.call(_a);
@@ -321,7 +351,7 @@ class Dienst {
     }
     this.sitzungen.delete(sitzung.appId);
     this.o.log.info(`App ${sitzung.appId} getrennt`);
-    this.o.ablage.schreibe(sitzung.appId, { online: false, zuletzt: Date.now() }).catch((fehler) => this.o.log.error(`Status der App ${sitzung.appId}: ${fehler.message}`));
+    this.o.ablage.schreibe(sitzung.appId, { online: false, weg: "", zuletzt: Date.now() }).catch((fehler) => this.o.log.error(`Status der App ${sitzung.appId}: ${fehler.message}`));
     this.anwesenheit.getrennt(sitzung.appId, sitzung.verbindung.herkunft.weg);
   }
 }

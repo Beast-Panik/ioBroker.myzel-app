@@ -46,6 +46,7 @@ __export(rechte_exports, {
   berechneRechte: () => berechneRechte,
   bereich: () => bereich,
   inhaltFuer: () => inhaltFuer,
+  istHandydatum: () => istHandydatum,
   istKennung: () => istKennung,
   istPersoenlich: () => istPersoenlich,
   kartenmaengel: () => kartenmaengel,
@@ -347,15 +348,34 @@ function kartenmaengel(quelle) {
 class Rechtestand {
   constructor(inhalt) {
     this.inhalt = inhalt;
+    var _a;
     for (const karte of inhalt.karten) {
-      for (const t of Object.values(karte.teile)) {
+      for (const [teil, t] of Object.entries(karte.teile)) {
         this.rechte.set(t.id, hoeher(this.rechte.get(t.id), t.recht));
+        if (t.recht === "schreiben") {
+          const liste = (_a = this.grenzen.get(t.id)) != null ? _a : [];
+          liste.push({ min: t.min, max: t.max, farbe: karte.typ === "lampe" && teil === "farbe" });
+          this.grenzen.set(t.id, liste);
+        }
       }
     }
   }
   rechte = /* @__PURE__ */ new Map();
+  // Was die App je Datenpunkt bedienen darf, so wie sie es mit der Karte erfahren hat
+  grenzen = /* @__PURE__ */ new Map();
   recht(id) {
     return this.rechte.get(id);
+  }
+  // Passt der Wert zu einer der Karten, über die die App den Datenpunkt bedient? Bereiche ohne min und max am
+  // Datenpunkt kommen aus der Kartenart, etwa 5 bis 30 °C; die App bekommt sie genannt, ioBroker kennt sie nicht.
+  passt(id, val) {
+    var _a;
+    return ((_a = this.grenzen.get(id)) != null ? _a : []).some((g) => {
+      if (typeof val === "number") {
+        return (g.min === void 0 || val >= g.min) && (g.max === void 0 || val <= g.max);
+      }
+      return !g.farbe || typeof val === "string" && /^#[0-9A-Fa-f]{6}$/.test(val);
+    });
   }
   get anzahlDatenpunkte() {
     return this.rechte.size;
@@ -364,7 +384,14 @@ class Rechtestand {
     return new Rechtestand({ profil: "", raeume: [], etagen: [], karten: [] });
   }
 }
-const istPersoenlich = (karte, quelle) => Object.values(karte.teile).some((dp) => betrifft(dp, quelle.datenpunkt(dp), [quelle.eigeneApps]));
+const HANDYDATEN = /^myzel-app\.\d+\.apps(\.|$)/;
+const istHandydatum = (id, eigeneApps) => liegtUnter(id, eigeneApps) || HANDYDATEN.test(id);
+const istPersoenlich = (karte, quelle) => Object.values(karte.teile).some(
+  (dp) => {
+    var _a, _b;
+    return [dp, ...(_b = (_a = quelle.datenpunkt(dp)) == null ? void 0 : _a.ziele) != null ? _b : []].some((i) => istHandydatum(i, quelle.eigeneApps));
+  }
+);
 function sicht(profil, quelle) {
   return Object.fromEntries(
     berechneRechte(profil, quelle).inhalt.karten.map((k) => [
@@ -453,6 +480,7 @@ function kartenEintrag(id, karte, recht, raum, quelle) {
   berechneRechte,
   bereich,
   inhaltFuer,
+  istHandydatum,
   istKennung,
   istPersoenlich,
   kartenmaengel,

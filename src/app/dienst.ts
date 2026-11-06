@@ -73,6 +73,8 @@ interface Angemeldet {
 
 export class Dienst implements Anmeldeziel {
     private readonly sitzungen = new Map<string, Angemeldet>();
+    // Eimer der Anmeldungen je App, nur für Apps mit gültigem Zugang
+    private readonly anmeldungen = new Map<string, { marken: number; zeit: number; gemeldet: boolean }>();
     private readonly abostelle: Abostelle;
     private readonly anwesenheit: Anwesenheit;
     private readonly hinweise: Hinweise;
@@ -111,11 +113,12 @@ export class Dienst implements Anmeldeziel {
         }
     }
 
-    // Beim Start ist keine App verbunden, auch wenn der letzte Lauf das nicht mehr schreiben konnte.
+    // Beim Start ist keine App verbunden, auch wenn der letzte Lauf das nicht mehr schreiben konnte. weg ist leer,
+    // solange die App nicht verbunden ist; sonst zeigte der Gerätemanager den alten Weg.
     public async starte(): Promise<void> {
         const appIds = await this.o.ablage.alle();
         for (const appId of appIds) {
-            await this.o.ablage.schreibe(appId, { online: false });
+            await this.o.ablage.schreibe(appId, { online: false, weg: '' });
             await this.o.ablage.richteEin(appId);
         }
         await this.anwesenheit.starte(appIds);
@@ -143,6 +146,11 @@ export class Dienst implements Anmeldeziel {
     }
 
     public async angemeldet(v: Verbindung, hallo: Hallo): Promise<void> {
+        if (!this.darfAnmelden(hallo.app, Date.now())) {
+            v.sendeFehler('zuviel');
+            v.schliesse(SCHLIESSCODE.zuviel, 'zu viele Anmeldungen');
+            return;
+        }
         const daten = await this.o.ablage.lies(hallo.app);
         if (!daten) {
             v.sendeFehler('zugang');
@@ -214,6 +222,14 @@ export class Dienst implements Anmeldeziel {
             v.schliesse(SCHLIESSCODE.intern, 'keine Adresse');
             return;
         }
+        const fern = this.fernFuer(appId, daten, version);
+        // Über den Vermittler nur mit Freigabe. Der Vermittler holt nur freigegebene Apps, doch seine Liste kann kurz
+        // veraltet sein, und er gilt nicht als vertrauenswürdig.
+        if (v.herkunft.weg === 'fern' && !fern) {
+            this.o.log.info(`App ${appId}: Fernzugang nicht freigegeben, Verbindung über den Vermittler beendet`);
+            v.schliesse(SCHLIESSCODE.fernAus, 'Fernzugang aus');
+            return;
+        }
         const rechte = rechteFuer(daten.profil, this.o.katalog);
         const werte = new Werteversand({
             appId,
@@ -247,11 +263,13 @@ export class Dienst implements Anmeldeziel {
             grenzen: this.o.grenzen,
         });
         const alt = this.sitzungen.get(appId);
-        const fern = this.fernFuer(appId, daten, version);
         this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version, fern });
         if (alt) {
             this.o.log.info(`App ${appId}: neue Verbindung ersetzt die bisherige`);
             alt.sitzung.verbindung.schliesse(SCHLIESSCODE.ersetzt, 'ersetzt');
+            // Die ersetzte Sitzung meldet keine Trennung mehr. Kommt die neue über den Vermittler, beginnt so der
+            // Nachlauf; eine neue im Heimnetz beendet ihn gleich wieder.
+            this.anwesenheit.getrennt(appId, alt.sitzung.verbindung.herkunft.weg);
         }
         v.beiTrennung(() => {
             this.getrennt(sitzung);
@@ -331,6 +349,24 @@ export class Dienst implements Anmeldeziel {
         }
     }
 
+    // Eimer je App: anmeldungenStoss sofort, danach eine je anmeldungAbstandMs
+    private darfAnmelden(appId: string, jetzt: number): boolean {
+        const g = this.o.grenzen ?? GRENZEN;
+        const alt = this.anmeldungen.get(appId);
+        const marken = alt
+            ? Math.min(g.anmeldungenStoss, alt.marken + (jetzt - alt.zeit) / g.anmeldungAbstandMs)
+            : g.anmeldungenStoss;
+        if (marken < 1) {
+            this.anmeldungen.set(appId, { marken, zeit: jetzt, gemeldet: true });
+            if (!alt?.gemeldet) {
+                this.o.log.warn(`App ${appId} meldet sich zu oft an, vorerst abgewiesen`);
+            }
+            return false;
+        }
+        this.anmeldungen.set(appId, { marken: marken - 1, zeit: jetzt, gemeldet: false });
+        return true;
+    }
+
     private fernFuer(appId: string, daten: AppDaten, version: number): Ferndaten | undefined {
         const zugang = this.o.fernzugang?.();
         if (version < FERN_SEIT || !zugang || daten.fern !== true) {
@@ -352,7 +388,7 @@ export class Dienst implements Anmeldeziel {
         this.sitzungen.delete(sitzung.appId);
         this.o.log.info(`App ${sitzung.appId} getrennt`);
         this.o.ablage
-            .schreibe(sitzung.appId, { online: false, zuletzt: Date.now() })
+            .schreibe(sitzung.appId, { online: false, weg: '', zuletzt: Date.now() })
             .catch((fehler: Error) => this.o.log.error(`Status der App ${sitzung.appId}: ${fehler.message}`));
         this.anwesenheit.getrennt(sitzung.appId, sitzung.verbindung.herkunft.weg);
     }

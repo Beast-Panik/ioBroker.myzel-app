@@ -92,7 +92,7 @@ export async function starteServer(o: ServerOptionen): Promise<Server> {
     });
     heimnetz.starte();
     if (o.fernablage) {
-        fern = new Fernverwaltung({
+        const f = new Fernverwaltung({
             adapterId: o.adapterId,
             ablage: o.fernablage,
             apps: o.ablage,
@@ -101,7 +101,14 @@ export async function starteServer(o: ServerOptionen): Promise<Server> {
             verbunden: ja => o.fernVerbunden?.(ja),
             geaendert: () => dienst.fernzugangGeaendert(),
         });
-        await fern.starte();
+        // Der Fernzugang darf nur sich selbst stören: Scheitert er, läuft das Heimnetz ohne ihn
+        try {
+            await f.starte();
+            fern = f;
+        } catch (fehler) {
+            f.beende();
+            o.log.error(`Fernzugang bleibt aus, Einstellung nicht lesbar: ${(fehler as Error).message}`);
+        }
     }
     return {
         kopplung,

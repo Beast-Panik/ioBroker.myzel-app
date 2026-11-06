@@ -32,6 +32,12 @@ const T = {
   profilWaehlen: { en: "Choose profile", de: "Profil w\xE4hlen" },
   handydaten: { en: "Phone data", de: "Handydaten" },
   entfernen: { en: "Remove", de: "Entfernen" },
+  heimnetz: { en: "Home network", de: "Heimnetz" },
+  trennung: { en: "Disconnected", de: "Getrennt" },
+  nichtVerbunden: { en: "Not connected", de: "Nicht verbunden" },
+  vermittler: { en: "Relay", de: "Vermittler" },
+  ueberHeimnetz: { en: "Connected in the home network", de: "Im Heimnetz verbunden" },
+  ueberVermittler: { en: "Connected on the go via the relay", de: "Unterwegs \xFCber den Vermittler verbunden" },
   profil: { en: "Profile", de: "Profil" },
   keinProfil: { en: "No profile (sees nothing)", de: "Kein Profil (sieht nichts)" },
   weiter: { en: "Next", de: "Weiter" },
@@ -87,6 +93,12 @@ const adminOffen = (instanzen) => ({
 });
 const KEINE = { refresh: false };
 const GERAETE = { refresh: "devices" };
+const FARBE = {
+  gut: "#00ac00",
+  mittel: "#ffcc00",
+  knapp: "#da8200",
+  schlecht: "#ff0000"
+};
 const eintrag = (wert) => typeof wert === "string" ? wert.trim() : "";
 const panel = (items) => ({ type: "panel", items });
 class Verwaltung {
@@ -226,10 +238,47 @@ class Verwaltung {
       name: daten.name,
       icon: HANDY,
       model: `Android ${daten.geraet.android}, App ${daten.geraet.appVersion}`,
-      status: {
-        connection: { stateId: `${praefix}.online`, mapping: { true: "connected", false: "disconnected" } },
-        ...daten.handydaten.akku ? { battery: { stateId: `${praefix}.akku.stand` } } : {}
-      },
+      // Alles als eigene Anzeigen in einer Zeile: Eingebaute Symbole stellt der Admin in eine eigene Zeile darüber.
+      indicators: [
+        {
+          id: "weg",
+          value: { stateId: `${praefix}.weg` },
+          hideIfEmpty: false,
+          levels: [
+            {
+              value: "lokal",
+              icon: "fa-wifi",
+              color: FARBE.gut,
+              text: T.heimnetz,
+              tooltip: T.ueberHeimnetz
+            },
+            {
+              value: "fern",
+              icon: "web",
+              color: FARBE.gut,
+              text: T.vermittler,
+              tooltip: T.ueberVermittler
+            },
+            // weg ist leer, solange die App nicht verbunden ist
+            { icon: "fa-unlink", color: FARBE.schlecht, text: T.trennung, tooltip: T.nichtVerbunden }
+          ]
+        },
+        ...daten.handydaten.akku ? [
+          {
+            id: "akku",
+            value: { stateId: `${praefix}.akku.stand` },
+            showValue: true,
+            unit: "%",
+            tooltip: T.akku,
+            levels: [
+              { max: 10, icon: "batteryAlert", color: FARBE.schlecht },
+              { max: 25, icon: "battery", color: FARBE.knapp },
+              { max: 55, icon: "battery", color: FARBE.mittel },
+              { icon: "battery", color: FARBE.gut }
+            ]
+          }
+        ] : []
+      ],
       actions: [
         {
           id: "profil",

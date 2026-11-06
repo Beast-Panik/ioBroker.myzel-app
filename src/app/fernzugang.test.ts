@@ -153,6 +153,16 @@ describe('Verwaltung des Fernzugangs', function () {
         expect(log).to.include('info Fernzugang ausgeschaltet');
     });
 
+    it('neues Geheimnis und neue Adresse zugleich: beides bleibt, keins stellt das Alte wieder her', async () => {
+        const f = await starte();
+        const alt = geschrieben[0].geheimnis;
+        await Promise.all([f.neuesGeheimnis(), f.setzeAdresse('https://vermittler.example.org')]);
+        expect(gespeichert?.adresse).to.equal('https://vermittler.example.org');
+        expect(gespeichert?.geheimnis).to.not.equal(alt);
+        expect(f.zugang()).to.deep.equal(gespeichert);
+        f.beende();
+    });
+
     it('meldet nur freigegebene Apps, mit dem Hash ihres Schlüssels', async () => {
         await apps.lege('abcdefgh', appDaten('1'.repeat(64), true));
         await apps.lege('ijklmnop', appDaten('2'.repeat(64), false));

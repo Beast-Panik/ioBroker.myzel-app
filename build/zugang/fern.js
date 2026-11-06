@@ -31,6 +31,7 @@ const VERMITTLERPROTOKOLL = 1;
 const NACHRICHT_BYTES = 32 * 1024;
 const VERMITTLER_NACHRICHT_BYTES = 64 * 1024;
 const FRIST_MS = 1e4;
+const INFO_BYTES = 1024;
 const FERNZEITEN = {
   ersterVersuchMs: 1e3,
   letzterVersuchMs: 6e4,
@@ -41,6 +42,8 @@ const FERNZEITEN = {
   stilleMs: 9e4,
   messenMs: 6e4,
   sitzungenJeFenster: 30,
+  // Eine einzelne App, etwa ein verlorenes Handy, darf das Fenster nicht für alle aufbrauchen
+  sitzungenJeApp: 10,
   fensterMs: 10 * 6e4
 };
 class Datenstrom extends import_node_stream.Duplex {
@@ -106,9 +109,13 @@ class Fern {
   beendet = false;
   letzterGrund = "";
   hashZuApp = /* @__PURE__ */ new Map();
-  // Wann zuletzt Sitzungen abgeholt wurden, nur im laufenden Fenster
+  // Wann zuletzt Sitzungen abgeholt wurden, nur im laufenden Fenster, mit App
   abgeholt = [];
   gebremstGemeldet = 0;
+  // Abgeholte Sitzungen, bis der Kern sie hat
+  imAufbau = /* @__PURE__ */ new Set();
+  // Abgleiche nacheinander, sonst überholte ein langsamer älterer einen neueren
+  abgleiche = Promise.resolve();
   basis;
   starte() {
     void this.verbinde();
@@ -119,15 +126,21 @@ class Fern {
     this.raeumeAuf();
     clearTimeout(this.wiederholung);
     (_a = this.steuer) == null ? void 0 : _a.terminate();
+    this.imAufbau.forEach((ws) => ws.terminate());
+    this.imAufbau.clear();
   }
   // Neue Liste der freigegebenen Apps: Wer fehlt, verliert beim Vermittler sofort seine Sitzungen.
-  async abgleich() {
-    var _a;
-    const apps = await this.o.apps();
-    this.hashZuApp = new Map(apps.map((a) => [a.hash, a.appId]));
-    if (((_a = this.steuer) == null ? void 0 : _a.readyState) === import_ws.WebSocket.OPEN) {
-      this.steuer.send(JSON.stringify({ art: "apps", hashes: [...this.hashZuApp.keys()] }));
-    }
+  abgleich() {
+    const lauf = this.abgleiche.then(async () => {
+      var _a;
+      const apps = await this.o.apps();
+      this.hashZuApp = new Map(apps.map((a) => [a.hash, a.appId]));
+      if (((_a = this.steuer) == null ? void 0 : _a.readyState) === import_ws.WebSocket.OPEN) {
+        this.steuer.send(JSON.stringify({ art: "apps", hashes: [...this.hashZuApp.keys()] }));
+      }
+    });
+    this.abgleiche = lauf.catch(() => void 0);
+    return lauf;
   }
   kopf() {
     return {
@@ -177,7 +190,13 @@ class Fern {
     ws.on("message", (daten, binaer) => {
       this.lebt();
       if (!binaer) {
-        this.nachricht(daten.toString("utf8"));
+        try {
+          this.nachricht(daten.toString("utf8"));
+        } catch (fehler) {
+          this.o.log.warn(
+            `Fernzugang: Nachricht des Vermittlers nicht verarbeitet: ${fehler.message}`
+          );
+        }
       }
     });
     ws.on("error", (fehler) => {
@@ -200,6 +219,7 @@ class Fern {
     });
   }
   async pruefeVersion() {
+    var _a;
     let info;
     try {
       const antwort = await fetch(`${this.o.adresse.replace(/\/+$/, "")}/info`, {
@@ -207,9 +227,10 @@ class Fern {
         redirect: "error"
       });
       if (!antwort.ok) {
+        await ((_a = antwort.body) == null ? void 0 : _a.cancel());
         throw new Error(`antwortet mit ${antwort.status}`);
       }
-      info = await antwort.json();
+      info = JSON.parse(await liesHoechstens(antwort, INFO_BYTES));
     } catch (fehler) {
       throw new Error(`Vermittler nicht erreichbar: ${grundAus(fehler)}`);
     }
@@ -226,29 +247,47 @@ class Fern {
       this.o.log.debug("Fernzugang: unlesbare Nachricht vom Vermittler");
       return;
     }
-    if (m.art !== "sitzung" || typeof m.nummer !== "string" || !/^[0-9a-f]{32}$/.test(m.nummer)) {
-      this.o.log.debug(`Fernzugang: unbekannte Nachricht vom Vermittler (${String(m.art)})`);
+    if (typeof m !== "object" || m === null || Array.isArray(m)) {
+      this.o.log.debug("Fernzugang: Nachricht vom Vermittler ist kein Objekt");
       return;
     }
-    const appId = typeof m.app === "string" ? this.hashZuApp.get(m.app) : void 0;
+    const { art, nummer, app } = m;
+    if (art !== "sitzung" || typeof nummer !== "string" || !/^[0-9a-f]{32}$/.test(nummer)) {
+      this.o.log.debug(
+        `Fernzugang: unbekannte Nachricht vom Vermittler (${typeof art === "string" && /^[a-z]{1,20}$/.test(art) ? art : typeof art})`
+      );
+      return;
+    }
+    const appId = typeof app === "string" ? this.hashZuApp.get(app) : void 0;
     if (!appId) {
       this.o.log.debug("Fernzugang: Sitzung einer unbekannten App nicht ge\xF6ffnet");
       return;
     }
-    if (!this.darfAbholen(Date.now())) {
+    if (!this.darfAbholen(Date.now(), appId)) {
       return;
     }
-    const daten = new import_ws.WebSocket(`${this.basis}/adapter/sitzung/${m.nummer}`, this.kopf());
+    const daten = new import_ws.WebSocket(`${this.basis}/adapter/sitzung/${nummer}`, this.kopf());
+    this.imAufbau.add(daten);
     daten.on("error", (fehler) => this.o.log.debug(`Fernzugang, Sitzung der App ${appId}: ${fehler.message}`));
+    daten.once("close", () => this.imAufbau.delete(daten));
     daten.once("open", () => {
+      this.imAufbau.delete(daten);
+      if (this.beendet) {
+        daten.terminate();
+        return;
+      }
       this.o.nimm(new Datenstrom(daten), { weg: "fern", adresse: `fern:${appId}`, app: appId });
     });
   }
   // Die App bekommt dann vom Vermittler nach 10 s Schluss und versucht es später wieder.
-  darfAbholen(jetzt) {
-    this.abgeholt = this.abgeholt.filter((t) => jetzt - t < this.z.fensterMs);
+  darfAbholen(jetzt, appId) {
+    this.abgeholt = this.abgeholt.filter((a) => jetzt - a.zeit < this.z.fensterMs);
+    if (this.abgeholt.filter((a) => a.appId === appId).length >= this.z.sitzungenJeApp) {
+      this.o.log.debug(`Fernzugang: App ${appId} hat zu viele Sitzungen in kurzer Zeit, vorerst keine weitere`);
+      return false;
+    }
     if (this.abgeholt.length < this.z.sitzungenJeFenster) {
-      this.abgeholt.push(jetzt);
+      this.abgeholt.push({ zeit: jetzt, appId });
       return true;
     }
     if (jetzt - this.gebremstGemeldet >= this.z.fensterMs) {
@@ -317,6 +356,28 @@ function grundAus(fehler) {
     return "keine Antwort binnen 10 s";
   }
   return (_c = ursache == null ? void 0 : ursache.message) != null ? _c : fehler.message;
+}
+async function liesHoechstens(antwort, grenze) {
+  var _a;
+  const leser = (_a = antwort.body) == null ? void 0 : _a.getReader();
+  if (!leser) {
+    return "";
+  }
+  const teile = [];
+  let laenge = 0;
+  for (; ; ) {
+    const { done, value } = await leser.read();
+    if (done) {
+      break;
+    }
+    laenge += value.byteLength;
+    if (laenge > grenze) {
+      await leser.cancel();
+      throw new Error("Antwort zu gro\xDF");
+    }
+    teile.push(value);
+  }
+  return Buffer.concat(teile).toString("utf8");
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.8.0",
+        "version": "0.8.1",
         "news": {
+            "0.8.1": {
+                "en": "The card of each app in the Apps tab shows live how it is connected: \"Home network\" or \"Relay\" in green, \"Disconnected\" in red, with the battery in the same line. While an app is not connected, apps.<id>.weg is empty. Security review: fixes against a faulty relay, limits for connections via the relay, presence after switching from home network to relay, value ranges for setting, notification folders only for selected apps, faster device detection",
+                "de": "Die Karte jeder App im Reiter Apps zeigt live, wie sie verbunden ist: „Heimnetz“ oder „Vermittler“ in Grün, „Getrennt“ in Rot, den Akku in derselben Zeile. Solange eine App nicht verbunden ist, ist apps.<id>.weg leer. Sicherheitsprüfung: Schutz vor einem fehlerhaften Vermittler, Grenzen für Verbindungen über ihn, Anwesenheit beim Wechsel vom Heimnetz zum Vermittler, Wertebereiche beim Setzen, Ordner für Benachrichtigungen nur für ausgewählte Apps, schnellere Erkennung"
+            },
             "0.8.0": {
                 "en": "Remote access through your own relay: the adapter dials out to the relay itself, no port opens at home, and TLS runs from the app into the adapter. New tab \"Remote access\" with the relay address, connection status, the line for the relay's .env, enabling per app (off by default) and a new key after confirmation. Apps from protocol 6 get the access when they connect at home; switching it off ends a session through the relay at once. Via the relay apps.<id>.weg is \"fern\", present stays home network only. Needs Myzel Home 0.7.0 or newer",
                 "de": "Fernzugang über einen eigenen Vermittler: Der Adapter wählt sich selbst beim Vermittler ein, zu Hause öffnet sich kein Port, und TLS geht von der App bis in den Adapter. Neuer Reiter „Fernzugang“ mit Adresse des Vermittlers, Stand der Verbindung, der Zeile für die .env des Vermittlers, Freigabe je App (Vorgabe aus) und neuem Schlüssel nach Rückfrage. Apps ab Protokoll 6 bekommen den Zugang beim Verbinden im Heimnetz; Ausschalten beendet eine Sitzung über den Vermittler sofort. Über den Vermittler steht apps.<id>.weg auf „fern“, anwesend gilt weiter nur im Heimnetz. Braucht Myzel Home ab 0.7.0"

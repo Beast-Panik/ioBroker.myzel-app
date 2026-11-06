@@ -187,22 +187,34 @@ export class Kartenseite {
         return 'fehler' in antwort ? antwort : { id: antwort.id, stand: this.stand(katalog) };
     }
 
+    private erkennung?: Promise<void>;
+
     private async vorschlaege(katalog: Katalog, frisch: boolean): Promise<Vorschlagstand> {
         if (!this.o.alleObjekte) {
             return { vorschlaege: [], namen: {} };
         }
         if (frisch || !this.erkannt || this.jetzt() - this.erkannt.zeit > ERKENNUNG_GILT) {
-            const liste = erkenneGeraete(await this.o.alleObjekte(), {
-                namespace: this.o.namespace,
-                sprache: katalog.sprache,
-            });
-            this.erkannt = { zeit: this.jetzt(), liste };
+            // Gleichzeitige Anfragen, etwa zwei offene Admin-Fenster, teilen sich einen Lauf
+            const alleObjekte = this.o.alleObjekte;
+            this.erkennung ??= (async () => {
+                try {
+                    const liste = erkenneGeraete(await alleObjekte(), {
+                        namespace: this.o.namespace,
+                        sprache: katalog.sprache,
+                    });
+                    this.erkannt = { zeit: this.jetzt(), liste };
+                } finally {
+                    this.erkennung = undefined;
+                }
+            })();
+            await this.erkennung;
         }
-        const liste = vorschlaege(this.erkannt.liste, {
+        const liste = vorschlaege(this.erkannt?.liste ?? [], {
             karten: katalog.karten().map(([, k]) => k),
             raeume: katalog.raeume(),
             datenpunkt: dp => katalog.datenpunkt(dp),
             eigeneApps: katalog.eigeneApps,
+            alleIds: [...katalog.alleDatenpunkte()].map(([id]) => id),
         });
         return {
             vorschlaege: liste,

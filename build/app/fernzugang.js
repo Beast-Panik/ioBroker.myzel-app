@@ -28,7 +28,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var fernzugang_exports = {};
 __export(fernzugang_exports, {
-  Fernverwaltung: () => Fernverwaltung
+  Fernverwaltung: () => Fernverwaltung,
+  istVermittleradresse: () => istVermittleradresse
 });
 module.exports = __toCommonJS(fernzugang_exports);
 var import_gemeinsam_schema = __toESM(require("../../protokoll/v1/gemeinsam.schema.json"));
@@ -37,6 +38,7 @@ var import_schema = require("../basis/schema");
 var import_fern = require("../zugang/fern");
 const pruefeVermittler = (0, import_schema.erstellePruefer)({ $ref: `${import_gemeinsam_schema.default.$id}#/$defs/vermittler` }, [import_gemeinsam_schema.default]);
 const ABGLEICH_MS = 500;
+const istVermittleradresse = (adresse) => pruefeVermittler(adresse).length === 0;
 class Fernverwaltung {
   constructor(o) {
     this.o = o;
@@ -45,6 +47,9 @@ class Fernverwaltung {
   fern;
   lage = { art: "aus" };
   abgleich;
+  // Änderungen nacheinander, jede aus dem Stand der vorigen; sonst stellte ein gleichzeitiges Speichern der Adresse
+  // das alte Geheimnis wieder her
+  aenderungen = Promise.resolve();
   get stand() {
     return this.lage;
   }
@@ -75,15 +80,17 @@ class Fernverwaltung {
     if (adresse && pruefeVermittler(adresse).length > 0) {
       return ["Adresse ung\xFCltig: nur https:// mit Namen, ohne Abfrage und Anker"];
     }
-    if (adresse === this.einstellung.adresse) {
-      return [];
-    }
-    await this.uebernimm({ ...this.einstellung, adresse });
-    this.o.log.info(adresse ? `Fernzugang \xFCber ${adresse}` : "Fernzugang ausgeschaltet");
+    await this.uebernimm((alt) => {
+      if (adresse === alt.adresse) {
+        return void 0;
+      }
+      this.o.log.info(adresse ? `Fernzugang \xFCber ${adresse}` : "Fernzugang ausgeschaltet");
+      return { ...alt, adresse };
+    });
     return [];
   }
   async neuesGeheimnis() {
-    await this.uebernimm({ ...this.einstellung, geheimnis: (0, import_fernschluessel.neuesFerngeheimnis)() });
+    await this.uebernimm((alt) => ({ ...alt, geheimnis: (0, import_fernschluessel.neuesFerngeheimnis)() }));
     this.o.log.warn(
       "Fernzugang: Schl\xFCssel neu erzeugt. Der Vermittler braucht die neue Zeile, die Apps ihren neuen Schl\xFCssel beim n\xE4chsten Verbinden im Heimnetz."
     );
@@ -102,11 +109,20 @@ class Fernverwaltung {
     (_a = this.fern) == null ? void 0 : _a.beende();
     this.fern = void 0;
   }
-  async uebernimm(einstellung) {
-    await this.o.ablage.schreibe(einstellung);
-    this.einstellung = einstellung;
-    this.verbinde();
-    this.o.geaendert();
+  // neu: undefined heißt keine Änderung
+  uebernimm(neu) {
+    const lauf = this.aenderungen.then(async () => {
+      const einstellung = neu(this.einstellung);
+      if (!einstellung) {
+        return;
+      }
+      await this.o.ablage.schreibe(einstellung);
+      this.einstellung = einstellung;
+      this.verbinde();
+      this.o.geaendert();
+    });
+    this.aenderungen = lauf.catch(() => void 0);
+    return lauf;
   }
   verbinde() {
     var _a;
@@ -152,6 +168,7 @@ class Fernverwaltung {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  Fernverwaltung
+  Fernverwaltung,
+  istVermittleradresse
 });
 //# sourceMappingURL=fernzugang.js.map

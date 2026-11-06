@@ -34,6 +34,12 @@ const GRENZEN = {
   verbindungen: 50,
   offenJeAdresse: 5,
   ohneAnmeldung: 20,
+  // Über den Vermittler, ebenfalls ohne Anmeldung: je App wie beim Vermittler, insgesamt die Hälfte von ohneAnmeldung
+  fernJeApp: 2,
+  fernOhneAnmeldung: 10,
+  // Anmeldungen je App: Eine App in einer Schleife schriebe sonst ohne Ende Log und Datenbank voll
+  anmeldungenStoss: 5,
+  anmeldungAbstandMs: 2e3,
   nachrichtenJeSekunde: 50,
   nachrichtenStoss: 100,
   inArbeitJeSitzung: 50,

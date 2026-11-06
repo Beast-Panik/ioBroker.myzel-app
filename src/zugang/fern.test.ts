@@ -1,5 +1,8 @@
 import { expect } from 'chai';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
+import { gzipSync } from 'node:zlib';
 import { WebSocket } from 'ws';
 import { alsApp, Vermittlernachbau } from '../../test/vermittler';
 import { adapterSchluessel, appSchluessel, neuesFerngeheimnis, vermittlerHash } from '../basis/fernschluessel';
@@ -49,6 +52,7 @@ describe('Zugangsweg fern gegen den Nachbau des Vermittlers', function () {
     let staende: Fernstand[];
     let genommen: [Duplex, Herkunft][];
     let apps: Fernapp[];
+    let liefere: () => Promise<Fernapp[]>;
 
     function starte(schluessel = adapterSchluessel(geheimnis), zeiten?: Partial<Fernzeiten>): Fern {
         const protokoll: Protokoll = {
@@ -60,7 +64,7 @@ describe('Zugangsweg fern gegen den Nachbau des Vermittlers', function () {
         fern = new Fern({
             adresse: v.adresse,
             adapterSchluessel: schluessel,
-            apps: () => Promise.resolve(apps),
+            apps: () => liefere(),
             nimm: (strom, herkunft) => genommen.push([strom, herkunft]),
             log: protokoll,
             stand: s => staende.push(s),
@@ -77,6 +81,7 @@ describe('Zugangsweg fern gegen den Nachbau des Vermittlers', function () {
         staende = [];
         genommen = [];
         apps = [tablet];
+        liefere = () => Promise.resolve(apps);
     });
     afterEach(async () => {
         fern?.beende();
@@ -138,6 +143,66 @@ describe('Zugangsweg fern gegen den Nachbau des Vermittlers', function () {
         await bis(() => genommen.length === 1);
         appSeite.destroy();
         expect(v.steuerungen).to.equal(1);
+    });
+
+    it('übersteht Nachrichten, die kein Objekt sind oder Felder als Objekt haben', async () => {
+        starte();
+        await verbunden();
+        v.melde('null');
+        v.melde('[]');
+        v.melde('7');
+        v.melde({ art: { toString: 1 } });
+        v.melde({ art: 'sitzung', nummer: { toString: 1 }, app: tablet.hash });
+        await bis(() => log.filter(z => z.startsWith('debug')).length === 5);
+        expect(log.filter(z => z.includes('kein Objekt'))).to.have.length(3);
+        expect(log).to.include('debug Fernzugang: unbekannte Nachricht vom Vermittler (object)');
+        const appSeite = await alsApp(v.adresse, tablet.schluessel);
+        await bis(() => genommen.length === 1);
+        appSeite.destroy();
+        expect(v.steuerungen).to.equal(1);
+    });
+
+    it('liest /info höchstens 1 KiB weit, auch gepackt', async () => {
+        // 50 MiB Nullen sind gepackt rund 50 KiB; fetch entpackt selbst
+        const bombe = gzipSync(Buffer.alloc(50 * 1024 * 1024));
+        const server = createServer((_, antwort) => {
+            antwort.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' });
+            antwort.end(bombe);
+        });
+        await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+        try {
+            const vorher = process.memoryUsage().rss;
+            fern = new Fern({
+                adresse: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+                adapterSchluessel: adapterSchluessel(geheimnis),
+                apps: () => Promise.resolve(apps),
+                nimm: () => undefined,
+                log: { debug: () => undefined, info: () => undefined, warn: t => log.push(t), error: t => log.push(t) },
+                stand: s => staende.push(s),
+            });
+            fern.starte();
+            await bis(() => staende.at(-1)?.art === 'getrennt');
+            expect((staende.at(-1) as { grund: string }).grund).to.equal(
+                'Vermittler nicht erreichbar: Antwort zu groß',
+            );
+            expect(process.memoryUsage().rss - vorher).to.be.below(20 * 1024 * 1024);
+        } finally {
+            server.closeAllConnections();
+            await new Promise(r => server.close(r));
+        }
+    });
+
+    it('Abgleiche nacheinander: ein langsamer älterer überholt keinen neueren', async () => {
+        const f = starte();
+        await verbunden();
+        await bis(() => v.steuer.length === 1);
+        const handy = app('ijklmnop');
+        liefere = () => new Promise(r => setTimeout(() => r([tablet]), 200));
+        const erster = f.abgleich();
+        liefere = () => Promise.resolve([tablet, handy]);
+        await Promise.all([erster, f.abgleich()]);
+        await bis(() => v.steuer.length === 3);
+        expect(v.steuer.at(-1)).to.deep.equal({ art: 'apps', hashes: [tablet.hash, handy.hash] });
     });
 
     it('wehrt Text auf einer Datenverbindung ab', async () => {
@@ -241,6 +306,24 @@ describe('Zugangsweg fern gegen den Nachbau des Vermittlers', function () {
         await pause(200);
         expect(genommen).to.have.length(2);
         expect(log.filter(z => z.includes('mehr als 2 Sitzungen'))).to.have.length(1);
+        seiten.forEach(s => s.destroy());
+    });
+
+    it('je App höchstens sitzungenJeApp im Fenster, andere Apps kommen weiter durch', async () => {
+        const handy = app('ijklmnop');
+        apps = [tablet, handy];
+        starte(undefined, { sitzungenJeApp: 2, fensterMs: 60_000 });
+        await verbunden();
+        await bis(() => v.steuer.length === 1);
+        const seiten: Duplex[] = [];
+        for (let i = 0; i < 3; i++) {
+            seiten.push(await alsApp(v.adresse, tablet.schluessel));
+        }
+        await bis(() => log.some(z => z.includes('App abcdefgh hat zu viele Sitzungen')));
+        seiten.push(await alsApp(v.adresse, handy.schluessel));
+        await bis(() => genommen.length === 3);
+        await pause(100);
+        expect(genommen.map(([, h]) => h.app)).to.deep.equal(['abcdefgh', 'abcdefgh', 'ijklmnop']);
         seiten.forEach(s => s.destroy());
     });
 

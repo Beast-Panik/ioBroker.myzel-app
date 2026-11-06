@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { type Erkannt, type Vorschlag, erkenneGeraete, verschoben, vorschlaege } from './erkennung';
-import { type Aufzaehlung, type Karte, type Merkmale, merkmale } from './rechte';
+import { type Aufzaehlung, type Karte, type Merkmale, liegtUnter, merkmale } from './rechte';
 
 type Common = Record<string, unknown>;
 
@@ -212,6 +212,7 @@ describe('Vorschläge aus der Erkennung', () => {
             raeume,
             datenpunkt: merkmaleAus(objekte),
             eigeneApps: 'myzel-app.0.apps',
+            alleIds: Object.keys(objekte).filter(id => objekte[id].type === 'state'),
         });
 
     it('lässt Geräte aus, deren Datenpunkte schon in einer Karte stehen, auch über einen Alias', () => {
@@ -279,6 +280,35 @@ describe('Vorschläge aus der Erkennung', () => {
                 teile: { schalten: `${SHELLY}.Relay1.Switch` },
             };
             expect(relais0([karte], zweitesRelais)).to.deep.equal(erwartet);
+        });
+
+        it('nimmt einen Ordner darüber nur mit, wenn alles darin zum Vorschlag gehört', () => {
+            const ORDNER = 'shelly.0.flur';
+            const GERAET = `${ORDNER}.SHPLG-S#D4E5F6#1`;
+            const objekte = {
+                ...OBJEKTE,
+                ...Object.fromEntries([
+                    obj(ORDNER, 'folder', { name: 'Flur' }),
+                    geraet(GERAET, 'Steckdose Flur'),
+                    kanal(`${GERAET}.Relay0`, 'Relay0'),
+                    zustand(`${GERAET}.Relay0.Switch`, 'switch', 'boolean', { write: true }),
+                ]),
+            };
+            const imFlur = [raum('flur', [ORDNER])];
+            const vorschlag = (o: typeof objekte): Pick<Vorschlag, 'zuordnung' | 'bleibt'> => {
+                const v = vorschlagFuer([], imFlur, o).find(x => x.herkunft.some(h => liegtUnter(h, GERAET)))!;
+                return { zuordnung: v.zuordnung, bleibt: v.bleibt };
+            };
+            expect(vorschlag(objekte)).to.deep.equal({ zuordnung: [ORDNER], bleibt: [] });
+            // Ein fremder Datenpunkt im Ordner bleibt, wo er ist: Der Ordner wandert nicht mit
+            const mitFremdem = {
+                ...objekte,
+                ...Object.fromEntries([zustand(`${ORDNER}.zaehlerstand`, 'value.power.consumption', 'number')]),
+            };
+            const v = vorschlag(mitFremdem);
+            expect(v.bleibt).to.deep.equal([{ raum: 'enum.rooms.flur', ueber: ORDNER }]);
+            expect(v.zuordnung).to.have.length(1);
+            expect(liegtUnter(v.zuordnung[0], GERAET)).to.equal(true);
         });
 
         it('nimmt nie eine ganze Instanz mit', () => {

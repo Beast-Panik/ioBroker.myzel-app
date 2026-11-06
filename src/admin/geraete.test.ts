@@ -419,22 +419,60 @@ describe('Gerätemanager', function () {
             g.schliesse();
         });
 
-        it('Gerätekarte: Name, Verbindung aus online, Akku nur mit eingeschaltetem Akku', async () => {
+        it('Gerätekarte: Name; Verbindung samt Weg aus weg und Akku nur mit eingeschaltetem Akku, alles in einer Zeile', async () => {
             const { g, appId } = await gekoppelt();
             const liste = await u.verwaltung.geraete();
             expect(liste, 'nur Apps, Karten haben einen eigenen Reiter').to.have.length(1);
             const [ohne] = liste;
             expect(ohne).to.deep.include({ id: appId, name: 'Tablet Flur', model: 'Android 15, App 1.0.0' });
             expect(ohne).to.not.have.property('group');
-            expect(ohne.status).to.deep.equal({
-                connection: {
-                    stateId: `${NAMESPACE}.apps.${appId}.online`,
-                    mapping: { true: 'connected', false: 'disconnected' },
+            expect(ohne, 'eingebaute Symbole stünden in einer eigenen Zeile').to.not.have.property('status');
+            expect(ohne.indicators, 'leeres weg heißt getrennt').to.deep.equal([
+                {
+                    id: 'weg',
+                    value: { stateId: `${NAMESPACE}.apps.${appId}.weg` },
+                    hideIfEmpty: false,
+                    levels: [
+                        {
+                            value: 'lokal',
+                            icon: 'fa-wifi',
+                            color: '#00ac00',
+                            text: { en: 'Home network', de: 'Heimnetz' },
+                            tooltip: { en: 'Connected in the home network', de: 'Im Heimnetz verbunden' },
+                        },
+                        {
+                            value: 'fern',
+                            icon: 'web',
+                            color: '#00ac00',
+                            text: { en: 'Relay', de: 'Vermittler' },
+                            tooltip: {
+                                en: 'Connected on the go via the relay',
+                                de: 'Unterwegs über den Vermittler verbunden',
+                            },
+                        },
+                        {
+                            icon: 'fa-unlink',
+                            color: '#ff0000',
+                            text: { en: 'Disconnected', de: 'Getrennt' },
+                            tooltip: { en: 'Not connected', de: 'Nicht verbunden' },
+                        },
+                    ],
                 },
-            });
+            ]);
             await u.ablage.aendere(appId, { handydaten: { akku: true, anruf: false, benachrichtigung: false } });
             const [mit] = await u.verwaltung.geraete();
-            expect(mit.status).to.deep.include({ battery: { stateId: `${NAMESPACE}.apps.${appId}.akku.stand` } });
+            expect(mit.indicators?.map(i => i.id)).to.deep.equal(['weg', 'akku']);
+            expect(mit.indicators?.[1]).to.deep.include({
+                value: { stateId: `${NAMESPACE}.apps.${appId}.akku.stand` },
+                showValue: true,
+                unit: '%',
+            });
+            expect(mit.indicators?.[1].levels?.map(l => [l.max, l.icon, l.color])).to.deep.equal([
+                [10, 'batteryAlert', '#ff0000'],
+                [25, 'battery', '#da8200'],
+                [55, 'battery', '#ffcc00'],
+                [undefined, 'battery', '#00ac00'],
+            ]);
             expect(mit.actions?.map(a => a.id)).to.deep.equal(['profil', 'handydaten', 'entfernen']);
             g.schliesse();
         });

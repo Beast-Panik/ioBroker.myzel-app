@@ -105,6 +105,9 @@ function erkenneGeraete(objekte, o) {
       objects: nutzbar,
       id,
       _keysOptional: ids,
+      // Sonst sortiert der Erkenner die ganze Liste bei jedem Aufruf neu: quadratisch, bei 40 000 Objekten 30 s
+      // Stillstand des Adapters statt 0,6 s
+      _keysOptionalSorted: true,
       // Je Aufruf neu: Der Erkenner sperrt sonst auch, was er in einem Gerät gesehen, aber nicht genommen hat,
       // und ein zweiter Kanal ginge verloren. Doppeltes fängt vergeben ab.
       _usedIdsOptional: [],
@@ -264,6 +267,16 @@ function zusammengefasst(gruppen) {
   return ergebnis;
 }
 function vorschlaege(erkannt, o) {
+  const ids = [...o.alleIds].sort();
+  const unter = (m) => {
+    const praefix = `${m}.`;
+    let i = ersterAb(ids, praefix);
+    const aus = [];
+    while (i < ids.length && ids[i].startsWith(praefix)) {
+      aus.push(ids[i++]);
+    }
+    return aus;
+  };
   const mitZielen = (dp) => {
     var _a, _b;
     return [dp, ...(_b = (_a = o.datenpunkt(dp)) == null ? void 0 : _a.ziele) != null ? _b : []];
@@ -282,7 +295,7 @@ function vorschlaege(erkannt, o) {
   const alleGruppen = zusammengefasst(gruppen);
   for (const g of alleGruppen) {
     const alle = Object.values(g.teile).flatMap(mitZielen);
-    if (alle.some((dp) => belegt.has(dp) || (0, import_rechte.liegtUnter)(dp, o.eigeneApps))) {
+    if (alle.some((dp) => belegt.has(dp) || (0, import_rechte.istHandydatum)(dp, o.eigeneApps))) {
       continue;
     }
     const roh = { name: g.name, typ: g.typ, raum: g.raum, teile: g.teile };
@@ -292,25 +305,47 @@ function vorschlaege(erkannt, o) {
     }
     const passend = Object.entries(g.teile).filter(([teil]) => !maengel.teile[teil]);
     const teile = g.typ === "messwert" ? alsWerte(passend.map(([, dp]) => dp)) : Object.fromEntries(passend);
-    ergebnis.push({ herkunft: g.herkunft, ...zuordnungVon(g, alleGruppen, o.raeume), karte: { ...roh, teile } });
+    ergebnis.push({
+      herkunft: g.herkunft,
+      ...zuordnungVon(g, alleGruppen, o.raeume, unter),
+      karte: { ...roh, teile }
+    });
   }
   return ergebnis;
 }
-function zuordnungVon(g, alle, raeume) {
+function zuordnungVon(g, alle, raeume, unter) {
   const andere = alle.filter((x) => x !== g).flatMap((x) => [...x.herkunft, ...Object.values(x.teile)]);
+  const eigene = [...g.herkunft, ...Object.values(g.teile)];
+  const ganz = (m) => {
+    var _a;
+    return m === ((_a = g.geraet) == null ? void 0 : _a.id) || unter(m).every((dp) => eigene.some((e) => (0, import_rechte.liegtUnter)(dp, e)));
+  };
   const zuordnung = /* @__PURE__ */ new Set();
   const bleibt = /* @__PURE__ */ new Map();
   for (const h of g.herkunft) {
     const halter = raeume.flatMap(
       (r) => r.mitglieder.filter((m) => m !== h && (0, import_rechte.liegtUnter)(h, m)).map((m) => ({ raum: r.id, ueber: m }))
     );
-    const aeusserstes = halter.map((x) => x.ueber).filter((m) => m.split(".").length > 2 && !andere.some((id) => (0, import_rechte.liegtUnter)(id, m))).sort((a, b) => a.length - b.length)[0];
+    const aeusserstes = halter.map((x) => x.ueber).filter((m) => m.split(".").length > 2 && !andere.some((id) => (0, import_rechte.liegtUnter)(id, m)) && ganz(m)).sort((a, b) => a.length - b.length)[0];
     zuordnung.add(aeusserstes != null ? aeusserstes : h);
     for (const x of halter.filter((x2) => !aeusserstes || !(0, import_rechte.liegtUnter)(x2.ueber, aeusserstes))) {
       bleibt.set(`${x.raum} ${x.ueber}`, x);
     }
   }
   return { zuordnung: [...zuordnung], bleibt: [...bleibt.values()] };
+}
+function ersterAb(sortiert, wert) {
+  let links = 0;
+  let rechts = sortiert.length;
+  while (links < rechts) {
+    const mitte = links + rechts >> 1;
+    if (sortiert[mitte] < wert) {
+      links = mitte + 1;
+    } else {
+      rechts = mitte;
+    }
+  }
+  return links;
 }
 function raumVon(ids, raeume) {
   var _a, _b;

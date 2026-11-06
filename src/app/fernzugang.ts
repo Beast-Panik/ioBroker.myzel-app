@@ -43,12 +43,17 @@ export interface FernverwaltungOptionen {
 const pruefeVermittler = erstellePruefer({ $ref: `${gemeinsam.$id}#/$defs/vermittler` }, [gemeinsam]);
 const ABGLEICH_MS = 500;
 
+export const istVermittleradresse = (adresse: string): boolean => pruefeVermittler(adresse).length === 0;
+
 // Hält Einstellung und Verbindung zum Vermittler; eine neue Adresse oder ein neues Geheimnis baut die Verbindung neu auf.
 export class Fernverwaltung {
     private einstellung: Ferneinstellung = { adresse: '', geheimnis: '' };
     private fern?: Fern;
     private lage: Fernlage = { art: 'aus' };
     private abgleich?: NodeJS.Timeout;
+    // Änderungen nacheinander, jede aus dem Stand der vorigen; sonst stellte ein gleichzeitiges Speichern der Adresse
+    // das alte Geheimnis wieder her
+    private aenderungen: Promise<void> = Promise.resolve();
 
     public constructor(private readonly o: FernverwaltungOptionen) {}
 
@@ -87,16 +92,18 @@ export class Fernverwaltung {
         if (adresse && pruefeVermittler(adresse).length > 0) {
             return ['Adresse ungültig: nur https:// mit Namen, ohne Abfrage und Anker'];
         }
-        if (adresse === this.einstellung.adresse) {
-            return [];
-        }
-        await this.uebernimm({ ...this.einstellung, adresse });
-        this.o.log.info(adresse ? `Fernzugang über ${adresse}` : 'Fernzugang ausgeschaltet');
+        await this.uebernimm(alt => {
+            if (adresse === alt.adresse) {
+                return undefined;
+            }
+            this.o.log.info(adresse ? `Fernzugang über ${adresse}` : 'Fernzugang ausgeschaltet');
+            return { ...alt, adresse };
+        });
         return [];
     }
 
     public async neuesGeheimnis(): Promise<void> {
-        await this.uebernimm({ ...this.einstellung, geheimnis: neuesFerngeheimnis() });
+        await this.uebernimm(alt => ({ ...alt, geheimnis: neuesFerngeheimnis() }));
         this.o.log.warn(
             'Fernzugang: Schlüssel neu erzeugt. Der Vermittler braucht die neue Zeile, ' +
                 'die Apps ihren neuen Schlüssel beim nächsten Verbinden im Heimnetz.',
@@ -117,11 +124,20 @@ export class Fernverwaltung {
         this.fern = undefined;
     }
 
-    private async uebernimm(einstellung: Ferneinstellung): Promise<void> {
-        await this.o.ablage.schreibe(einstellung);
-        this.einstellung = einstellung;
-        this.verbinde();
-        this.o.geaendert();
+    // neu: undefined heißt keine Änderung
+    private uebernimm(neu: (alt: Ferneinstellung) => Ferneinstellung | undefined): Promise<void> {
+        const lauf = this.aenderungen.then(async () => {
+            const einstellung = neu(this.einstellung);
+            if (!einstellung) {
+                return;
+            }
+            await this.o.ablage.schreibe(einstellung);
+            this.einstellung = einstellung;
+            this.verbinde();
+            this.o.geaendert();
+        });
+        this.aenderungen = lauf.catch(() => undefined);
+        return lauf;
     }
 
     private verbinde(): void {

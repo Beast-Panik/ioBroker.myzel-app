@@ -291,6 +291,7 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         g.schliesse();
         await bis(() => u.ablage.werte_.get(appId)?.online === false);
         expect(u.ablage.werte_.get(appId)?.zuletzt).to.be.a('number');
+        expect(u.ablage.werte_.get(appId)?.weg, 'getrennt kein Weg').to.equal('');
     });
 
     it('meldet eine gekoppelte App mit ihrem Zugang an und übernimmt neue Geräteangaben', async () => {
@@ -953,6 +954,28 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         g.schliesse();
     });
 
+    it('Benachrichtigung einer App außerhalb der Auswahl: nur unter letzte, kein neuer Ordner', async () => {
+        const { g, appId } = await mitHandydaten(4);
+        g.sende({ t: 'auswahl', apps: [{ paket: 'org.signal', app: 'Signal' }] });
+        await bis(() => u.ablage.ordner_.get(appId)?.has('org-signal') === true);
+        g.sende({ t: 'benachrichtigung', app: 'Fremd', paket: 'com.fremd1', text: 'Hallo', zeit: vorhin() });
+        await bis(() => u.ablage.zustaende_.get(`${appId}.benachrichtigungen.letzte.text`)?.val === 'Hallo');
+        expect([...u.ablage.ordner_.get(appId)!.keys()].sort()).to.deep.equal(['letzte', 'org-signal']);
+        g.schliesse();
+    });
+
+    it('meldet sich eine App in einer Schleife an, kommt nach dem Stoß zuviel', async () => {
+        const { g: erste, appId, zugang } = await kopple();
+        erste.schliesse();
+        for (let i = 0; i < 5; i++) {
+            const g = await melde(appId, zugang);
+            expect((await g.naechste()).t).to.equal('willkommen');
+            g.schliesse();
+        }
+        await erwarteFehler(await melde(appId, zugang), 'zuviel', SCHLIESSCODE.zuviel);
+        expect(u.log.filter(z => z.includes('meldet sich zu oft an'))).to.have.length(1);
+    });
+
     it('Anwesenheit: true über das Heimnetz, false erst nach dem Nachlauf, neue Anmeldung bricht ihn ab', async () => {
         const { g, appId, zugang } = await kopple();
         const anwesend = (): unknown => u.ablage.werte_.get(appId)?.anwesend;
@@ -994,9 +1017,9 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
             gekoppeltAm: Date.now(),
             geraet,
         });
-        await ablage.schreibe('abcdefgh', { online: true, anwesend: true });
+        await ablage.schreibe('abcdefgh', { online: true, weg: 'fern', anwesend: true });
         await starte({}, { ablage });
-        expect(ablage.werte_.get('abcdefgh')).to.include({ online: false, anwesend: true });
+        expect(ablage.werte_.get('abcdefgh')).to.include({ online: false, weg: '', anwesend: true });
         await bis(() => ablage.werte_.get('abcdefgh')?.anwesend === false, NACHLAUF_MS * 3);
     });
 
@@ -1153,13 +1176,35 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         return appSeite;
     }
 
+    const fernablage = (e: Ferneinstellung): Fernablage => {
+        let jetzt = { ...e };
+        return {
+            lies: () => Promise.resolve({ ...jetzt }),
+            schreibe: n => {
+                jetzt = { ...n };
+                return Promise.resolve();
+            },
+        };
+    };
+
+    // Fernzugang an, aber kein Vermittler: Die Verbindungen kommen in diesen Tests über fernStrom
+    async function mitFernzugang(aenderung: Partial<Grenzen> = {}): Promise<void> {
+        const ferngeheimnis = neuesFerngeheimnis();
+        geheimnisse.push(ferngeheimnis);
+        await starte(aenderung, {
+            fernablage: fernablage({ adresse: 'https://127.0.0.1:9', geheimnis: ferngeheimnis }),
+        });
+    }
+
     it('nimmt Verbindungen über einen beliebigen Datenstrom an, so wie der Fernweg', async () => {
-        const { g: erste, appId, zugang } = await kopple();
+        await mitFernzugang();
+        const { g: erste, appId, zugang } = await kopple('familie', 6);
         erste.schliesse();
-        await erwarteFehler(await melde(appId, zugang, { strom: fernStrom(appId) }), 'intern', SCHLIESSCODE.intern);
+        await freigeben(appId, true);
+        await erwarteFehler(await melde(appId, zugang, { strom: fernStrom(appId) }, 6), 'intern', SCHLIESSCODE.intern);
         expect(u.log.join('\n')).to.contain('keine Adresse des Adapters bekannt');
         adressen = ['192.168.1.5:8095'];
-        const g = await melde(appId, zugang, { strom: fernStrom(appId) });
+        const g = await melde(appId, zugang, { strom: fernStrom(appId) }, 6);
         expect((await g.naechste()).adressen).to.deep.equal(adressen);
         await bis(() => u.ablage.werte_.get(appId)?.weg === 'fern');
         await bis(() => u.ablage.werte_.get(appId)?.anwesend === false, 1000);
@@ -1187,14 +1232,66 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         daheim.schliesse();
     });
 
+    it('über den Vermittler nur mit Freigabe, sonst Schluss mit 4010 und kein willkommen', async () => {
+        await mitFernzugang();
+        adressen = ['192.168.1.5:8095'];
+        const { g: erste, appId, zugang } = await kopple('familie', 6);
+        erste.schliesse();
+        const ohne = await melde(appId, zugang, { strom: fernStrom(appId) }, 6);
+        expect((await ohne.geschlossen()).code).to.equal(SCHLIESSCODE.fernAus);
+        expect(u.log.join('\n')).to.contain(`App ${appId}: Fernzugang nicht freigegeben`);
+        expect(u.ablage.werte_.get(appId)?.online).to.equal(false);
+    });
+
+    it('ersetzt eine Verbindung über den Vermittler eine im Heimnetz, ist die App nach dem Nachlauf abwesend', async () => {
+        await mitFernzugang();
+        adressen = ['192.168.1.5:8095'];
+        const daheim = await kopple('familie', 6);
+        await freigeben(daheim.appId, true);
+        const anwesend = (): unknown => u.ablage.werte_.get(daheim.appId)?.anwesend;
+        await bis(() => anwesend() === true);
+        // Die alte Verbindung im Heimnetz ist nicht getrennt, etwa halb offen nach dem Verlassen des WLAN
+        const fern = await melde(daheim.appId, daheim.zugang, { strom: fernStrom(daheim.appId) }, 6);
+        expect(await fern.naechste()).to.include({ t: 'willkommen' });
+        expect((await daheim.g.geschlossen()).code).to.equal(SCHLIESSCODE.ersetzt);
+        await bis(() => anwesend() === false, NACHLAUF_MS * 3);
+        expect(u.ablage.werte_.get(daheim.appId)).to.include({ online: true, weg: 'fern' });
+        // Zurück im Heimnetz wieder anwesend
+        const wieder = await melde(daheim.appId, daheim.zugang, undefined, 6);
+        expect(await wieder.naechste()).to.include({ t: 'willkommen' });
+        await bis(() => anwesend() === true);
+        wieder.schliesse();
+    });
+
+    it('über den Vermittler je App höchstens fernJeApp und insgesamt fernOhneAnmeldung ohne Anmeldung', async () => {
+        await mitFernzugang({ fernJeApp: 2, fernOhneAnmeldung: 3 });
+        const offen = (strom: Duplex): Promise<boolean> =>
+            new Promise(r => {
+                strom.once('close', () => r(false));
+                setTimeout(() => r(!strom.destroyed), 200);
+            });
+        const a = [fernStrom('aaaaaaaa'), fernStrom('aaaaaaaa'), fernStrom('aaaaaaaa')];
+        expect(await Promise.all(a.map(offen))).to.deep.equal([true, true, false]);
+        const b = [fernStrom('bbbbbbbb'), fernStrom('bbbbbbbb')];
+        expect(await Promise.all(b.map(offen))).to.deep.equal([true, false]);
+        expect(u.log.join('\n')).to.contain('3 Verbindungen über den Vermittler ohne Anmeldung');
+        // Das Heimnetz behält seine Plätze
+        const daheim = await verbinde();
+        daheim.sende({ t: 'hallo', v: 6, app: 'cccccccc', zugang: 'x'.repeat(43), geraet });
+        expect((await daheim.naechste()).t).to.equal('fehler');
+        [...a, ...b].forEach(x => x.destroy());
+    });
+
     it('über den Fernzugang seltener Lebenszeichen und mehr Geduld bis zum Schluss', async () => {
-        await starte({ pingMs: 50, totMs: 200, fernPingMs: 300, fernTotMs: 800 });
+        await mitFernzugang({ pingMs: 50, totMs: 200, fernPingMs: 300, fernTotMs: 800 });
         adressen = ['192.168.1.5:8095'];
         const daheim = await kopple('familie', 6);
         const unterwegs = await kopple('familie', 6);
+        await freigeben(unterwegs.appId, true);
         unterwegs.g.schliesse();
         const fern = await melde(unterwegs.appId, unterwegs.zugang, { strom: fernStrom(unterwegs.appId) }, 6);
-        expect(await fern.naechste()).to.include({ t: 'willkommen' });
+        // willkommen nennt pingS und totS unter den Grenzen des Schemas; das prüft die Gegenstelle, deshalb ungelesen
+        await bis(() => u.ablage.werte_.get(unterwegs.appId)?.weg === 'fern');
         const beginn = Date.now();
         const daheimVorher = daheim.g.pings;
         const still = await verbinde({ autoPong: false, strom: fernStrom(unterwegs.appId) });
@@ -1211,17 +1308,6 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         fern.schliesse();
         daheim.g.schliesse();
     });
-
-    const fernablage = (e: Ferneinstellung): Fernablage => {
-        let jetzt = { ...e };
-        return {
-            lies: () => Promise.resolve({ ...jetzt }),
-            schreibe: n => {
-                jetzt = { ...n };
-                return Promise.resolve();
-            },
-        };
-    };
 
     async function freigeben(appId: string, fern: boolean): Promise<void> {
         await u.ablage.aendere(appId, { fern });

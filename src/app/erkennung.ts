@@ -6,6 +6,7 @@ import {
     type Kartentyp,
     type Merkmale,
     NAME_LAENGE,
+    istHandydatum,
     liegtUnter,
     maengelDerKarte,
     merkmale,
@@ -138,6 +139,9 @@ export function erkenneGeraete(
                 objects: nutzbar,
                 id,
                 _keysOptional: ids,
+                // Sonst sortiert der Erkenner die ganze Liste bei jedem Aufruf neu: quadratisch, bei 40 000 Objekten 30 s
+                // Stillstand des Adapters statt 0,6 s
+                _keysOptionalSorted: true,
                 // Je Aufruf neu: Der Erkenner sperrt sonst auch, was er in einem Gerät gesehen, aber nicht genommen hat,
                 // und ein zweiter Kanal ginge verloren. Doppeltes fängt vergeben ab.
                 _usedIdsOptional: [],
@@ -341,8 +345,20 @@ export function vorschlaege(
         datenpunkt: (id: string) => Merkmale | undefined;
         // <namespace>.apps: persönliche Daten nie über einen Vorschlag
         eigeneApps: string;
+        // Alle Datenpunkte, damit ein Raumwechsel keinen Ordner samt fremden Objekten verschiebt
+        alleIds: string[];
     },
 ): Vorschlag[] {
+    const ids = [...o.alleIds].sort();
+    const unter = (m: string): string[] => {
+        const praefix = `${m}.`;
+        let i = ersterAb(ids, praefix);
+        const aus: string[] = [];
+        while (i < ids.length && ids[i].startsWith(praefix)) {
+            aus.push(ids[i++]);
+        }
+        return aus;
+    };
     const mitZielen = (dp: string): string[] => [dp, ...(o.datenpunkt(dp)?.ziele ?? [])];
     const belegt = new Set(o.karten.flatMap(k => Object.values(k.teile)).flatMap(mitZielen));
     const gruppen = erkannt.map(e => ({
@@ -358,7 +374,7 @@ export function vorschlaege(
     const alleGruppen = zusammengefasst(gruppen);
     for (const g of alleGruppen) {
         const alle = Object.values(g.teile).flatMap(mitZielen);
-        if (alle.some(dp => belegt.has(dp) || liegtUnter(dp, o.eigeneApps))) {
+        if (alle.some(dp => belegt.has(dp) || istHandydatum(dp, o.eigeneApps))) {
             continue;
         }
         const roh: Karte = { name: g.name, typ: g.typ, raum: g.raum, teile: g.teile };
@@ -369,7 +385,11 @@ export function vorschlaege(
         const passend = Object.entries(g.teile).filter(([teil]) => !maengel.teile[teil]);
         // Werte rücken nach, damit kein Messwert mit Wert 2 ohne Wert 1 entsteht.
         const teile = g.typ === 'messwert' ? alsWerte(passend.map(([, dp]) => dp)) : Object.fromEntries(passend);
-        ergebnis.push({ herkunft: g.herkunft, ...zuordnungVon(g, alleGruppen, o.raeume), karte: { ...roh, teile } });
+        ergebnis.push({
+            herkunft: g.herkunft,
+            ...zuordnungVon(g, alleGruppen, o.raeume, unter),
+            karte: { ...roh, teile },
+        });
     }
     return ergebnis;
 }
@@ -377,9 +397,18 @@ export function vorschlaege(
 // Steht die Herkunft über ein Objekt darüber in einem Raum, etwa das ganze Gerät, wandert das äußerste davon mit, wenn
 // kein anderer Vorschlag darunter liegt; auch einer, der schon eine Karte ist. Sonst bliebe es im alten Raum, der Raum
 // wäre nicht korrigiert. Liegen andere darunter, etwa ein zweites Relais für einen anderen Raum, bleibt es, wo es ist.
-// Eine ganze Instanz wandert nie.
-function zuordnungVon(g: Gruppe, alle: Gruppe[], raeume: Aufzaehlung[]): Pick<Vorschlag, 'zuordnung' | 'bleibt'> {
+// Eine ganze Instanz wandert nie, ein Ordner oder anderes Objekt darüber nur, wenn alles darunter zum Vorschlag gehört;
+// das Gerät selbst wandert ganz.
+function zuordnungVon(
+    g: Gruppe,
+    alle: Gruppe[],
+    raeume: Aufzaehlung[],
+    unter: (id: string) => string[],
+): Pick<Vorschlag, 'zuordnung' | 'bleibt'> {
     const andere = alle.filter(x => x !== g).flatMap(x => [...x.herkunft, ...Object.values(x.teile)]);
+    const eigene = [...g.herkunft, ...Object.values(g.teile)];
+    const ganz = (m: string): boolean =>
+        m === g.geraet?.id || unter(m).every(dp => eigene.some(e => liegtUnter(dp, e)));
     const zuordnung = new Set<string>();
     const bleibt = new Map<string, { raum: string; ueber: string }>();
     for (const h of g.herkunft) {
@@ -388,7 +417,7 @@ function zuordnungVon(g: Gruppe, alle: Gruppe[], raeume: Aufzaehlung[]): Pick<Vo
         );
         const aeusserstes = halter
             .map(x => x.ueber)
-            .filter(m => m.split('.').length > 2 && !andere.some(id => liegtUnter(id, m)))
+            .filter(m => m.split('.').length > 2 && !andere.some(id => liegtUnter(id, m)) && ganz(m))
             .sort((a, b) => a.length - b.length)[0];
         zuordnung.add(aeusserstes ?? h);
         for (const x of halter.filter(x => !aeusserstes || !liegtUnter(x.ueber, aeusserstes))) {
@@ -396,6 +425,21 @@ function zuordnungVon(g: Gruppe, alle: Gruppe[], raeume: Aufzaehlung[]): Pick<Vo
         }
     }
     return { zuordnung: [...zuordnung], bleibt: [...bleibt.values()] };
+}
+
+// Stelle des ersten Eintrags, der nicht vor wert kommt
+function ersterAb(sortiert: string[], wert: string): number {
+    let links = 0;
+    let rechts = sortiert.length;
+    while (links < rechts) {
+        const mitte = (links + rechts) >> 1;
+        if (sortiert[mitte] < wert) {
+            links = mitte + 1;
+        } else {
+            rechts = mitte;
+        }
+    }
+    return links;
 }
 
 // Der erste Raum in der Folge der App, der eines der Objekte enthält, selbst oder über ein Objekt darüber

@@ -28,6 +28,7 @@ var import_fernseite = require("./admin/fernseite");
 var import_kartenseite = require("./admin/kartenseite");
 var import_profilseite = require("./admin/profilseite");
 var import_raumseite = require("./admin/raumseite");
+var import_fernzugang = require("./app/fernzugang");
 var import_katalog = require("./app/katalog");
 var import_objekte = require("./app/objekte");
 var import_rechte = require("./app/rechte");
@@ -230,10 +231,18 @@ class MyzelApp extends utils.Adapter {
     if (typeof (n == null ? void 0 : n.adresse) !== "string" || typeof n.geheimnis !== "string") {
       return void 0;
     }
-    const geheimnis = this.decrypt(n.geheimnis);
+    let geheimnis = "";
+    try {
+      geheimnis = this.decrypt(n.geheimnis);
+    } catch {
+    }
     if (!/^[A-Za-z0-9_-]{43}$/.test(geheimnis)) {
       this.log.warn(`Geheimnis in ${this.namespace}.${FERNZUGANG} unbrauchbar, wird neu erzeugt`);
       return void 0;
+    }
+    if (n.adresse && !(0, import_fernzugang.istVermittleradresse)(n.adresse)) {
+      this.log.warn(`Adresse in ${this.namespace}.${FERNZUGANG} ung\xFCltig, der Fernzugang bleibt aus`);
+      return { adresse: "", geheimnis };
     }
     return { adresse: n.adresse, geheimnis };
   }

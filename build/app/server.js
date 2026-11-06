@@ -73,7 +73,7 @@ async function starteServer(o) {
   });
   heimnetz.starte();
   if (o.fernablage) {
-    fern = new import_fernzugang.Fernverwaltung({
+    const f = new import_fernzugang.Fernverwaltung({
       adapterId: o.adapterId,
       ablage: o.fernablage,
       apps: o.ablage,
@@ -85,7 +85,13 @@ async function starteServer(o) {
       },
       geaendert: () => dienst.fernzugangGeaendert()
     });
-    await fern.starte();
+    try {
+      await f.starte();
+      fern = f;
+    } catch (fehler) {
+      f.beende();
+      o.log.error(`Fernzugang bleibt aus, Einstellung nicht lesbar: ${fehler.message}`);
+    }
   }
   return {
     kopplung,

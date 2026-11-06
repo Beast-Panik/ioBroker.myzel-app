@@ -6,7 +6,7 @@ import { FERNBEFEHLE, type Fernbetrieb, Fernseite } from './admin/fernseite';
 import { KARTENBEFEHLE, Kartenseite } from './admin/kartenseite';
 import { PROFILBEFEHLE, Profilseite } from './admin/profilseite';
 import { RAUMBEFEHLE, Raumseite } from './admin/raumseite';
-import type { Ferneinstellung } from './app/fernzugang';
+import { type Ferneinstellung, istVermittleradresse } from './app/fernzugang';
 import { Katalog } from './app/katalog';
 import { IoBrokerAblage, IoBrokerQuelle, appIdAus } from './app/objekte';
 import { kartenmaengel } from './app/rechte';
@@ -224,10 +224,20 @@ class MyzelApp extends utils.Adapter {
         if (typeof n?.adresse !== 'string' || typeof n.geheimnis !== 'string') {
             return undefined;
         }
-        const geheimnis = this.decrypt(n.geheimnis);
+        let geheimnis = '';
+        try {
+            geheimnis = this.decrypt(n.geheimnis);
+        } catch {
+            // wie unbrauchbar
+        }
         if (!/^[A-Za-z0-9_-]{43}$/.test(geheimnis)) {
             this.log.warn(`Geheimnis in ${this.namespace}.${FERNZUGANG} unbrauchbar, wird neu erzeugt`);
             return undefined;
+        }
+        // Das Objekt kann jeder mit Schreibrecht ändern; ohne äußeres TLS ginge der Adapterschlüssel im Klartext hinaus
+        if (n.adresse && !istVermittleradresse(n.adresse)) {
+            this.log.warn(`Adresse in ${this.namespace}.${FERNZUGANG} ungültig, der Fernzugang bleibt aus`);
+            return { adresse: '', geheimnis };
         }
         return { adresse: n.adresse, geheimnis };
     }

@@ -14,7 +14,9 @@ import {
     bereich,
     berechneRechte,
     inhaltFuer,
+    istPersoenlich,
     kartenmaengel,
+    Rechtestand,
     rechteFuer,
 } from './rechte';
 
@@ -407,6 +409,59 @@ describe('Bereich und Schritt für Regler', () => {
         expect(bereich(helligkeit, { min: 100, max: 0 })).to.equal(undefined);
         expect(bereich(soll, { min: 20, max: 20 })).to.equal(undefined);
         expect(bereich(helligkeit, { min: Number.NaN })).to.deep.equal({ min: 0, max: 100, schritt: 1 });
+    });
+});
+
+describe('Was die App setzen darf', () => {
+    const stand = new Rechtestand({
+        profil: 'p',
+        raeume: [],
+        karten: [
+            {
+                id: 'k1',
+                name: 'Heizung',
+                typ: 'thermostat',
+                teile: { soll: { id: 'h.0.soll', typ: 'number', min: 5, max: 30, recht: 'schreiben' } },
+            },
+            {
+                id: 'k2',
+                name: 'Lampe',
+                typ: 'lampe',
+                teile: {
+                    helligkeit: { id: 'l.0.hell', typ: 'number', min: 0, max: 100, recht: 'schreiben' },
+                    farbe: { id: 'l.0.farbe', typ: 'string', recht: 'schreiben' },
+                },
+            },
+            // Derselbe Datenpunkt in einer zweiten Karte mit eigenem Bereich: einer reicht
+            {
+                id: 'k3',
+                name: 'Heizung gesperrt',
+                typ: 'thermostat',
+                teile: { soll: { id: 'h.0.soll', typ: 'number', min: 40, max: 50, recht: 'lesen' } },
+            },
+        ],
+    });
+
+    it('nur im Bereich der Karte, Farbe nur als #RRGGBB, ohne bedienbare Karte nichts', () => {
+        expect(stand.passt('h.0.soll', 21.5)).to.equal(true);
+        expect(stand.passt('h.0.soll', 95)).to.equal(false);
+        expect(stand.passt('h.0.soll', 45)).to.equal(false);
+        expect(stand.passt('l.0.hell', -1e9)).to.equal(false);
+        expect(stand.passt('l.0.farbe', '#ff8800')).to.equal(true);
+        expect(stand.passt('l.0.farbe', 'x'.repeat(60_000))).to.equal(false);
+        expect(stand.passt('a.0.anderes', true)).to.equal(false);
+    });
+});
+
+describe('Persönliche Daten', () => {
+    const quelle = { eigeneApps: 'myzel-app.0.apps', datenpunkt: () => undefined };
+    const karte = (id: string): Karte => ({ name: 'x', typ: 'messwert', raum: '', teile: { wert1: id } });
+
+    it('Handydaten jeder Instanz sind persönlich, anderes nicht', () => {
+        expect(istPersoenlich(karte('myzel-app.0.apps.abcdefgh.akku.stand'), quelle)).to.equal(true);
+        expect(istPersoenlich(karte('myzel-app.1.apps.abcdefgh.anruf.nummer'), quelle)).to.equal(true);
+        expect(istPersoenlich(karte('myzel-app.1.info.connection'), quelle)).to.equal(false);
+        expect(istPersoenlich(karte('hue.0.apps.licht'), quelle)).to.equal(false);
     });
 });
 

@@ -226,6 +226,10 @@ export class Werteversand implements Empfaenger {
                 ablehnen('rechte', 'kein Recht schreiben');
                 return;
             }
+            if (!this.rechte_.passt(id, val)) {
+                ablehnen('ungueltig', 'Wert passt nicht zum Bereich der Karte');
+                return;
+            }
             const fehler = pruefeSetzen(common, val);
             if (fehler) {
                 ablehnen(fehler.code, fehler.grund);

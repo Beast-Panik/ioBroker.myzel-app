@@ -9,6 +9,9 @@ export const VERMITTLERPROTOKOLL = 1;
 const NACHRICHT_BYTES = 32 * 1024;
 const VERMITTLER_NACHRICHT_BYTES = 64 * 1024;
 const FRIST_MS = 10_000;
+// /info ist ein kleines JSON. Gezählt wird nach dem Entpacken: fetch entpackt gzip selbst, 1 KiB können dann
+// Gigabyte werden.
+const INFO_BYTES = 1024;
 
 // Jede Verbindung zum Vermittler ist eine neue Verbindung von zu Hause zum Server. Vor dem Server sitzen
 // Schutzmechanismen, die einen Anschluss bei vielen neuen Verbindungen in kurzer Zeit sperren; dann wäre der Adapter für
@@ -24,6 +27,8 @@ export const FERNZEITEN = {
     stilleMs: 90_000,
     messenMs: 60_000,
     sitzungenJeFenster: 30,
+    // Eine einzelne App, etwa ein verlorenes Handy, darf das Fenster nicht für alle aufbrauchen
+    sitzungenJeApp: 10,
     fensterMs: 10 * 60_000,
 };
 export type Fernzeiten = typeof FERNZEITEN;
@@ -114,9 +119,13 @@ export class Fern {
     private beendet = false;
     private letzterGrund = '';
     private hashZuApp = new Map<string, string>();
-    // Wann zuletzt Sitzungen abgeholt wurden, nur im laufenden Fenster
-    private abgeholt: number[] = [];
+    // Wann zuletzt Sitzungen abgeholt wurden, nur im laufenden Fenster, mit App
+    private abgeholt: { zeit: number; appId: string }[] = [];
     private gebremstGemeldet = 0;
+    // Abgeholte Sitzungen, bis der Kern sie hat
+    private readonly imAufbau = new Set<WebSocket>();
+    // Abgleiche nacheinander, sonst überholte ein langsamer älterer einen neueren
+    private abgleiche: Promise<void> = Promise.resolve();
     private readonly basis: string;
 
     public constructor(private readonly o: FernOptionen) {
@@ -134,15 +143,21 @@ export class Fern {
         this.raeumeAuf();
         clearTimeout(this.wiederholung);
         this.steuer?.terminate();
+        this.imAufbau.forEach(ws => ws.terminate());
+        this.imAufbau.clear();
     }
 
     // Neue Liste der freigegebenen Apps: Wer fehlt, verliert beim Vermittler sofort seine Sitzungen.
-    public async abgleich(): Promise<void> {
-        const apps = await this.o.apps();
-        this.hashZuApp = new Map(apps.map(a => [a.hash, a.appId]));
-        if (this.steuer?.readyState === WebSocket.OPEN) {
-            this.steuer.send(JSON.stringify({ art: 'apps', hashes: [...this.hashZuApp.keys()] }));
-        }
+    public abgleich(): Promise<void> {
+        const lauf = this.abgleiche.then(async () => {
+            const apps = await this.o.apps();
+            this.hashZuApp = new Map(apps.map(a => [a.hash, a.appId]));
+            if (this.steuer?.readyState === WebSocket.OPEN) {
+                this.steuer.send(JSON.stringify({ art: 'apps', hashes: [...this.hashZuApp.keys()] }));
+            }
+        });
+        this.abgleiche = lauf.catch(() => undefined);
+        return lauf;
     }
 
     private kopf(): {
@@ -199,7 +214,14 @@ export class Fern {
         ws.on('message', (daten: Buffer, binaer: boolean) => {
             this.lebt();
             if (!binaer) {
-                this.nachricht(daten.toString('utf8'));
+                // Ein Fehler hier endete ungefangen und mit ihm der ganze Adapter, auch im Heimnetz
+                try {
+                    this.nachricht(daten.toString('utf8'));
+                } catch (fehler) {
+                    this.o.log.warn(
+                        `Fernzugang: Nachricht des Vermittlers nicht verarbeitet: ${(fehler as Error).message}`,
+                    );
+                }
             }
         });
         ws.on('error', fehler => {
@@ -233,9 +255,10 @@ export class Fern {
                 redirect: 'error',
             });
             if (!antwort.ok) {
+                await antwort.body?.cancel();
                 throw new Error(`antwortet mit ${antwort.status}`);
             }
-            info = await antwort.json();
+            info = JSON.parse(await liesHoechstens(antwort, INFO_BYTES));
         } catch (fehler) {
             throw new Error(`Vermittler nicht erreichbar: ${grundAus(fehler as Error)}`);
         }
@@ -246,37 +269,56 @@ export class Fern {
     }
 
     private nachricht(text: string): void {
-        let m: { art?: unknown; nummer?: unknown; app?: unknown };
+        let m: unknown;
         try {
-            m = JSON.parse(text) as typeof m;
+            m = JSON.parse(text);
         } catch {
             this.o.log.debug('Fernzugang: unlesbare Nachricht vom Vermittler');
             return;
         }
-        if (m.art !== 'sitzung' || typeof m.nummer !== 'string' || !/^[0-9a-f]{32}$/.test(m.nummer)) {
-            this.o.log.debug(`Fernzugang: unbekannte Nachricht vom Vermittler (${String(m.art)})`);
+        if (typeof m !== 'object' || m === null || Array.isArray(m)) {
+            this.o.log.debug('Fernzugang: Nachricht vom Vermittler ist kein Objekt');
             return;
         }
-        const appId = typeof m.app === 'string' ? this.hashZuApp.get(m.app) : undefined;
+        const { art, nummer, app } = m as { art?: unknown; nummer?: unknown; app?: unknown };
+        if (art !== 'sitzung' || typeof nummer !== 'string' || !/^[0-9a-f]{32}$/.test(nummer)) {
+            // Nur bekannte Arten ins Log; der Rest käme vom Vermittler
+            this.o.log.debug(
+                `Fernzugang: unbekannte Nachricht vom Vermittler (${typeof art === 'string' && /^[a-z]{1,20}$/.test(art) ? art : typeof art})`,
+            );
+            return;
+        }
+        const appId = typeof app === 'string' ? this.hashZuApp.get(app) : undefined;
         if (!appId) {
             this.o.log.debug('Fernzugang: Sitzung einer unbekannten App nicht geöffnet');
             return;
         }
-        if (!this.darfAbholen(Date.now())) {
+        if (!this.darfAbholen(Date.now(), appId)) {
             return;
         }
-        const daten = new WebSocket(`${this.basis}/adapter/sitzung/${m.nummer}`, this.kopf());
+        const daten = new WebSocket(`${this.basis}/adapter/sitzung/${nummer}`, this.kopf());
+        this.imAufbau.add(daten);
         daten.on('error', fehler => this.o.log.debug(`Fernzugang, Sitzung der App ${appId}: ${fehler.message}`));
+        daten.once('close', () => this.imAufbau.delete(daten));
         daten.once('open', () => {
+            this.imAufbau.delete(daten);
+            if (this.beendet) {
+                daten.terminate();
+                return;
+            }
             this.o.nimm(new Datenstrom(daten), { weg: 'fern', adresse: `fern:${appId}`, app: appId });
         });
     }
 
     // Die App bekommt dann vom Vermittler nach 10 s Schluss und versucht es später wieder.
-    private darfAbholen(jetzt: number): boolean {
-        this.abgeholt = this.abgeholt.filter(t => jetzt - t < this.z.fensterMs);
+    private darfAbholen(jetzt: number, appId: string): boolean {
+        this.abgeholt = this.abgeholt.filter(a => jetzt - a.zeit < this.z.fensterMs);
+        if (this.abgeholt.filter(a => a.appId === appId).length >= this.z.sitzungenJeApp) {
+            this.o.log.debug(`Fernzugang: App ${appId} hat zu viele Sitzungen in kurzer Zeit, vorerst keine weitere`);
+            return false;
+        }
         if (this.abgeholt.length < this.z.sitzungenJeFenster) {
-            this.abgeholt.push(jetzt);
+            this.abgeholt.push({ zeit: jetzt, appId });
             return true;
         }
         if (jetzt - this.gebremstGemeldet >= this.z.fensterMs) {
@@ -351,4 +393,27 @@ export function grundAus(fehler: Error & { code?: string; cause?: unknown }): st
         return 'keine Antwort binnen 10 s';
     }
     return ursache?.message ?? fehler.message;
+}
+
+// Liest den Körper höchstens bis grenze Bytes, sonst Fehler
+async function liesHoechstens(antwort: Response, grenze: number): Promise<string> {
+    const leser = antwort.body?.getReader();
+    if (!leser) {
+        return '';
+    }
+    const teile: Uint8Array[] = [];
+    let laenge = 0;
+    for (;;) {
+        const { done, value } = await leser.read();
+        if (done) {
+            break;
+        }
+        laenge += value.byteLength;
+        if (laenge > grenze) {
+            await leser.cancel();
+            throw new Error('Antwort zu groß');
+        }
+        teile.push(value);
+    }
+    return Buffer.concat(teile).toString('utf8');
 }

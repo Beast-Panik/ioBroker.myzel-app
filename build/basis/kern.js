@@ -205,7 +205,7 @@ class Kern {
   beendet = false;
   nimm(strom, herkunft) {
     strom.on("error", () => void 0);
-    const grund = this.ablehnung(herkunft.adresse);
+    const grund = this.ablehnung(herkunft);
     if (grund) {
       this.o.log.debug(`Verbindung von ${herkunft.adresse} abgewiesen: ${grund}`);
       strom.destroy();
@@ -246,7 +246,8 @@ class Kern {
     }
     this.wss.close();
   }
-  ablehnung(adresse) {
+  ablehnung(herkunft) {
+    const adresse = herkunft.adresse;
     if (this.beendet) {
       return "Adapter wird beendet";
     }
@@ -259,14 +260,22 @@ class Kern {
     const bereich = (0, import_schutz.sperrbereich)(adresse);
     let gesamt = 0;
     let vonHier = 0;
+    let fern = 0;
     for (const e of this.eingaenge) {
       if (e.vorAnmeldung) {
         gesamt++;
         vonHier += (0, import_schutz.sperrbereich)(e.herkunft.adresse) === bereich ? 1 : 0;
+        fern += e.herkunft.weg === "fern" ? 1 : 0;
       }
     }
     if (gesamt >= this.grenzen.ohneAnmeldung) {
       return `${gesamt} Verbindungen ohne Anmeldung insgesamt`;
+    }
+    if (herkunft.weg === "fern") {
+      if (fern >= this.grenzen.fernOhneAnmeldung) {
+        return `${fern} Verbindungen \xFCber den Vermittler ohne Anmeldung`;
+      }
+      return vonHier >= this.grenzen.fernJeApp ? `${vonHier} Verbindungen ohne Anmeldung` : void 0;
     }
     return vonHier >= this.grenzen.offenJeAdresse ? `${vonHier} Verbindungen ohne Anmeldung` : void 0;
   }

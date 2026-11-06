@@ -126,22 +126,33 @@ class Kartenseite {
   mitStand(katalog, antwort) {
     return "fehler" in antwort ? antwort : { id: antwort.id, stand: this.stand(katalog) };
   }
+  erkennung;
   async vorschlaege(katalog, frisch) {
+    var _a, _b, _c;
     if (!this.o.alleObjekte) {
       return { vorschlaege: [], namen: {} };
     }
     if (frisch || !this.erkannt || this.jetzt() - this.erkannt.zeit > ERKENNUNG_GILT) {
-      const liste2 = (0, import_erkennung.erkenneGeraete)(await this.o.alleObjekte(), {
-        namespace: this.o.namespace,
-        sprache: katalog.sprache
-      });
-      this.erkannt = { zeit: this.jetzt(), liste: liste2 };
+      const alleObjekte = this.o.alleObjekte;
+      (_a = this.erkennung) != null ? _a : this.erkennung = (async () => {
+        try {
+          const liste2 = (0, import_erkennung.erkenneGeraete)(await alleObjekte(), {
+            namespace: this.o.namespace,
+            sprache: katalog.sprache
+          });
+          this.erkannt = { zeit: this.jetzt(), liste: liste2 };
+        } finally {
+          this.erkennung = void 0;
+        }
+      })();
+      await this.erkennung;
     }
-    const liste = (0, import_erkennung.vorschlaege)(this.erkannt.liste, {
+    const liste = (0, import_erkennung.vorschlaege)((_c = (_b = this.erkannt) == null ? void 0 : _b.liste) != null ? _c : [], {
       karten: katalog.karten().map(([, k]) => k),
       raeume: katalog.raeume(),
       datenpunkt: (dp) => katalog.datenpunkt(dp),
-      eigeneApps: katalog.eigeneApps
+      eigeneApps: katalog.eigeneApps,
+      alleIds: [...katalog.alleDatenpunkte()].map(([id]) => id)
     });
     return {
       vorschlaege: liste,

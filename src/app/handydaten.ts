@@ -50,11 +50,19 @@ export interface HandyeingangOptionen {
     handydaten: Handydaten;
 }
 
+// Wie die Auswahl im Protokoll höchstens nennt
+const ORDNER_HOECHSTENS = 100;
+
 /** Handydaten einer Sitzung: nur eingeschaltete Datenarten, mit ack=true und der Zeit vom Handy (Abschnitt 6 des Konzepts). */
 export class Handyeingang {
     public handydaten: Handydaten;
     // Nacheinander, sonst überholt ein späteres Ereignis ein früheres zwischen den Einzelwerten.
     private reihe: Promise<void> = Promise.resolve();
+    // Ordner nur für Apps, die das Handy zuletzt ausgewählt hat; ein falsches Handy legte sonst mit jedem neuen
+    // Paketnamen einen Ordner an. Ohne Auswahl (Protokoll 3) höchstens ORDNER_HOECHSTENS.
+    private ausgewaehlt?: Set<string>;
+    private ohneAuswahl?: Set<string>;
+    private zuVieleGemeldet = false;
 
     public constructor(private readonly o: HandyeingangOptionen) {
         this.handydaten = o.handydaten;
@@ -103,7 +111,7 @@ export class Handyeingang {
         };
         const ordner = ordnerFuer(b.paket);
         return this.erledige('benachrichtigung', 'benachrichtigung', async () => {
-            if (ordner) {
+            if (ordner && (await this.darfOrdner(ordner))) {
                 await this.o.ablage.schreibeBenachrichtigung(this.o.appId, ordner, b.app, werte, b.zeit);
             }
             await this.o.ablage.schreibeBenachrichtigung(this.o.appId, LETZTE, b.app, werte, b.zeit);
@@ -119,6 +127,9 @@ export class Handyeingang {
                 namen.set(ordner, a.app);
             }
         }
+        if (this.handydaten.benachrichtigung) {
+            this.ausgewaehlt = new Set(namen.keys());
+        }
         return this.erledige('benachrichtigung', 'Auswahl', async () => {
             for (const ordner of await this.o.ablage.benachrichtigungsordner(this.o.appId)) {
                 if (!namen.has(ordner)) {
@@ -130,6 +141,27 @@ export class Handyeingang {
             }
             this.o.log.debug(`App ${this.o.appId}: Auswahl mit ${namen.size} Apps übernommen`);
         });
+    }
+
+    private async darfOrdner(ordner: string): Promise<boolean> {
+        if (this.ausgewaehlt) {
+            return this.ausgewaehlt.has(ordner);
+        }
+        this.ohneAuswahl ??= new Set(await this.o.ablage.benachrichtigungsordner(this.o.appId));
+        if (this.ohneAuswahl.has(ordner)) {
+            return true;
+        }
+        if (this.ohneAuswahl.size >= ORDNER_HOECHSTENS) {
+            if (!this.zuVieleGemeldet) {
+                this.zuVieleGemeldet = true;
+                this.o.log.warn(
+                    `App ${this.o.appId}: mehr als ${ORDNER_HOECHSTENS} Apps mit Benachrichtigungen, weitere nur unter ${LETZTE}`,
+                );
+            }
+            return false;
+        }
+        this.ohneAuswahl.add(ordner);
+        return true;
     }
 
     private schreibe(art: keyof Handydaten, werte: Appwerte, zeit: number): Promise<void> {

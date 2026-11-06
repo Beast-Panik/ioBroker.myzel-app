@@ -27,6 +27,7 @@ var import_objekte = require("./objekte");
 function kuerze(text, laenge) {
   return text.length <= laenge ? text : [...text].slice(0, laenge).join("");
 }
+const ORDNER_HOECHSTENS = 100;
 class Handyeingang {
   constructor(o) {
     this.o = o;
@@ -35,6 +36,11 @@ class Handyeingang {
   handydaten;
   // Nacheinander, sonst überholt ein späteres Ereignis ein früheres zwischen den Einzelwerten.
   reihe = Promise.resolve();
+  // Ordner nur für Apps, die das Handy zuletzt ausgewählt hat; ein falsches Handy legte sonst mit jedem neuen
+  // Paketnamen einen Ordner an. Ohne Auswahl (Protokoll 3) höchstens ORDNER_HOECHSTENS.
+  ausgewaehlt;
+  ohneAuswahl;
+  zuVieleGemeldet = false;
   akku(m) {
     const a = m;
     return this.schreibe("akku", { "akku.stand": a.stand, "akku.laedt": a.laedt }, a.zeit);
@@ -78,7 +84,7 @@ class Handyeingang {
     };
     const ordner = (0, import_objekte.ordnerFuer)(b.paket);
     return this.erledige("benachrichtigung", "benachrichtigung", async () => {
-      if (ordner) {
+      if (ordner && await this.darfOrdner(ordner)) {
         await this.o.ablage.schreibeBenachrichtigung(this.o.appId, ordner, b.app, werte, b.zeit);
       }
       await this.o.ablage.schreibeBenachrichtigung(this.o.appId, import_objekte.LETZTE, b.app, werte, b.zeit);
@@ -93,6 +99,9 @@ class Handyeingang {
         namen.set(ordner, a.app);
       }
     }
+    if (this.handydaten.benachrichtigung) {
+      this.ausgewaehlt = new Set(namen.keys());
+    }
     return this.erledige("benachrichtigung", "Auswahl", async () => {
       for (const ordner of await this.o.ablage.benachrichtigungsordner(this.o.appId)) {
         if (!namen.has(ordner)) {
@@ -104,6 +113,27 @@ class Handyeingang {
       }
       this.o.log.debug(`App ${this.o.appId}: Auswahl mit ${namen.size} Apps \xFCbernommen`);
     });
+  }
+  async darfOrdner(ordner) {
+    var _a;
+    if (this.ausgewaehlt) {
+      return this.ausgewaehlt.has(ordner);
+    }
+    (_a = this.ohneAuswahl) != null ? _a : this.ohneAuswahl = new Set(await this.o.ablage.benachrichtigungsordner(this.o.appId));
+    if (this.ohneAuswahl.has(ordner)) {
+      return true;
+    }
+    if (this.ohneAuswahl.size >= ORDNER_HOECHSTENS) {
+      if (!this.zuVieleGemeldet) {
+        this.zuVieleGemeldet = true;
+        this.o.log.warn(
+          `App ${this.o.appId}: mehr als ${ORDNER_HOECHSTENS} Apps mit Benachrichtigungen, weitere nur unter ${import_objekte.LETZTE}`
+        );
+      }
+      return false;
+    }
+    this.ohneAuswahl.add(ordner);
+    return true;
   }
   schreibe(art, werte, zeit) {
     return this.erledige(art, art, () => this.o.ablage.schreibe(this.o.appId, werte, zeit));

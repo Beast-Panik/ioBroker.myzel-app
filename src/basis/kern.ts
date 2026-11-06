@@ -225,7 +225,7 @@ export class Kern {
 
     public nimm(strom: Duplex, herkunft: Herkunft): void {
         strom.on('error', () => undefined);
-        const grund = this.ablehnung(herkunft.adresse);
+        const grund = this.ablehnung(herkunft);
         if (grund) {
             this.o.log.debug(`Verbindung von ${herkunft.adresse} abgewiesen: ${grund}`);
             strom.destroy();
@@ -268,7 +268,8 @@ export class Kern {
         this.wss.close();
     }
 
-    private ablehnung(adresse: string): string | undefined {
+    private ablehnung(herkunft: Herkunft): string | undefined {
+        const adresse = herkunft.adresse;
         if (this.beendet) {
             return 'Adapter wird beendet';
         }
@@ -281,15 +282,24 @@ export class Kern {
         const bereich = sperrbereich(adresse);
         let gesamt = 0;
         let vonHier = 0;
+        let fern = 0;
         for (const e of this.eingaenge) {
             if (e.vorAnmeldung) {
                 gesamt++;
                 vonHier += sperrbereich(e.herkunft.adresse) === bereich ? 1 : 0;
+                fern += e.herkunft.weg === 'fern' ? 1 : 0;
             }
         }
         // Gesamtgrenze, damit Verbindungen ohne Anmeldung nie alle Plätze belegen und angemeldete Apps Platz behalten
         if (gesamt >= this.grenzen.ohneAnmeldung) {
             return `${gesamt} Verbindungen ohne Anmeldung insgesamt`;
+        }
+        // Der Vermittler gilt nicht als vertrauenswürdig: Er darf nie die Plätze des Heimnetzes belegen
+        if (herkunft.weg === 'fern') {
+            if (fern >= this.grenzen.fernOhneAnmeldung) {
+                return `${fern} Verbindungen über den Vermittler ohne Anmeldung`;
+            }
+            return vonHier >= this.grenzen.fernJeApp ? `${vonHier} Verbindungen ohne Anmeldung` : undefined;
         }
         return vonHier >= this.grenzen.offenJeAdresse ? `${vonHier} Verbindungen ohne Anmeldung` : undefined;
     }
