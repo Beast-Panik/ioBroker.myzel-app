@@ -1304,6 +1304,58 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
             wieder.schliesse();
         });
 
+        it('Log: Wechsel und geänderter Stand mit Namen und Uhrzeit vom Handy, nie ein Ort, gleicher Stand nur einmal', async () => {
+            u.quelle.zone('zuhause', ZUHAUSE).zone('arbeit', ARBEIT);
+            const { g, appId, zugang } = await kopple('familie', 7);
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true }, zonenwahl: ['zuhause', 'arbeit'] });
+            await g.naechste();
+            const zeilen = (): string[] => u.log.filter(z => z.startsWith(`info App ${appId}: Zone`));
+            const um = (ms: number): string =>
+                [new Date(ms).getHours(), new Date(ms).getMinutes(), new Date(ms).getSeconds()]
+                    .map(n => String(n).padStart(2, '0'))
+                    .join(':');
+            const zeit = vorhin();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+            await bis(() => zeilen().length === 1);
+            g.sende({ t: 'zone', id: 'zuhause', drin: false, zeit: zeit + 61_000 });
+            await bis(() => zeilen().length === 2);
+            // Der Stand nach dem Wechsel sagt nichts Neues
+            g.sende({ t: 'zonenstand', aktiv: true, drin: [], zeit: zeit + 62_000 });
+            g.sende({ t: 'zonenstand', aktiv: false, grund: 'standort_aus', drin: [], zeit: zeit + 63_000 });
+            await bis(() => zeilen().length === 3);
+            g.schliesse();
+            await bis(() => u.ablage.werte_.get(appId)?.online === false);
+            // Jede neue Verbindung schickt den Stand wieder
+            const wieder = await melde(appId, zugang, undefined, 7);
+            expect((await wieder.naechste()).t).to.equal('willkommen');
+            wieder.sende({ t: 'zonenstand', aktiv: false, grund: 'standort_aus', drin: [], zeit: zeit + 64_000 });
+            wieder.sende({ t: 'zonenstand', aktiv: true, drin: ['arbeit', 'zuhause'], zeit: zeit + 65_000 });
+            await bis(() => zeilen().length === 4);
+            expect(zeilen()).to.deep.equal([
+                `info App ${appId}: Zonen aktiv um ${um(zeit)}, drin: „Zuhause“`,
+                `info App ${appId}: Zone „Zuhause“ verlassen um ${um(zeit + 61_000)}`,
+                `info App ${appId}: Zonen nicht aktiv um ${um(zeit + 63_000)}: Standort am Handy aus`,
+                `info App ${appId}: Zonen aktiv um ${um(zeit + 65_000)}, drin: „Arbeit“, „Zuhause“`,
+            ]);
+            wieder.schliesse();
+        });
+
+        it('Log: Nach Aus und An im Admin steht auch ein gleicher Stand wieder da', async () => {
+            const { g, appId } = await mitZonen(['zuhause']);
+            const zeilen = (): string[] => u.log.filter(z => z.startsWith(`info App ${appId}: Zonen aktiv`));
+            const zeit = vorhin();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+            await bis(() => zeilen().length === 1);
+            await aendereApp(appId, { handydaten: { ...AUS }, zonenwahl: ['zuhause'] });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === false);
+            await g.naechste();
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true }, zonenwahl: ['zuhause'] });
+            await g.naechste();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit: zeit + 1 });
+            await bis(() => zeilen().length === 2);
+            g.schliesse();
+        });
+
         it('Entfernt oder mit Protokoll 6: zonen.aktiv false mit Grund, verbunden wie getrennt', async () => {
             const zeit = vorhin();
             const melde7 = async (): Promise<{ g: Gegenstelle; appId: string; zugang: string }> => {

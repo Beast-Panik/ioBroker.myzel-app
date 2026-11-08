@@ -37,6 +37,10 @@ const ZONEN_STOSS = 10;
 const STANDORT_ABSTAND_MS = 6e4;
 const STANDORT_STOSS = 2;
 const VORSCHLAG_ABSTAND_MS = 6e4;
+function uhrzeit(ms) {
+  const d = new Date(ms);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+}
 function neueHandyeimer(g) {
   var _a, _b;
   return {
@@ -54,6 +58,7 @@ class Handyeingang {
     this.zonen = o.zonen;
     this.jetzt = (_a = o.jetzt) != null ? _a : Date.now;
     const eimer = (_b = o.eimer) != null ? _b : neueHandyeimer(o.grenzen);
+    this.eimer = eimer;
     this.zonenEimer = eimer.zonen;
     this.standortEimer = eimer.standort;
     this.vorschlagEimer = eimer.vorschlag;
@@ -71,6 +76,7 @@ class Handyeingang {
   zonenEimer;
   standortEimer;
   vorschlagEimer;
+  eimer;
   jetzt;
   /**
    * Neue, geprüfte Freigaben aus der Neuberechnung. Endet die Freigabe der Zonen, sagt zonen.aktiv es gleich in der
@@ -97,6 +103,7 @@ class Handyeingang {
   // zonen.aktiv false mit Grund, falls es den Datenpunkt gibt und er noch nicht so steht
   zonenAus(grund) {
     this.reihe = this.reihe.then(async () => {
+      this.eimer.imLog = void 0;
       try {
         await meldeZonenAus(this.o.ablage, this.o.appId, (0, import_zonen.grundText)(grund, this.o.sprache()));
       } catch {
@@ -130,6 +137,19 @@ class Handyeingang {
       });
       await this.o.ablage.schreibeZone(this.o.appId, id, name, z.drin, z.zeit);
       await this.o.ablage.schreibe(this.o.appId, { "zonen.letzte": letzte }, z.zeit);
+      this.o.log.info(
+        `App ${this.o.appId}: Zone \u201E${name}\u201C ${z.drin ? "betreten" : "verlassen"} um ${uhrzeit(z.zeit)}`
+      );
+      const imLog = this.eimer.imLog;
+      if (imLog == null ? void 0 : imLog.aktiv) {
+        const drin = new Set(imLog.drin);
+        if (z.drin) {
+          drin.add(id);
+        } else {
+          drin.delete(id);
+        }
+        this.eimer.imLog = { ...imLog, drin: [...drin].sort() };
+      }
     });
   }
   // Ersetzt den Stand aller freigegebenen Zonen; ohne aktiv bleiben die Zonen, wie sie waren, nur aktiv und grund
@@ -152,7 +172,32 @@ class Handyeingang {
         }
       }
       await this.o.ablage.schreibe(this.o.appId, { "zonen.aktiv": s.aktiv, "zonen.grund": grund }, s.zeit);
+      this.logStand(s, grund, zonen);
     });
+  }
+  // Nur, wenn sich etwas geändert hat; die Zonen mit Namen, nie ein Ort
+  logStand(s, grund, zonen) {
+    const neu = {
+      aktiv: s.aktiv,
+      grund,
+      drin: s.aktiv ? zonen.map((z) => z.id).filter((id) => s.drin.includes(id)).sort() : []
+    };
+    if ((0, import_node_util.isDeepStrictEqual)(neu, this.eimer.imLog)) {
+      return;
+    }
+    this.eimer.imLog = neu;
+    const um = uhrzeit(s.zeit);
+    if (!s.aktiv) {
+      this.o.log.info(`App ${this.o.appId}: Zonen nicht aktiv um ${um}: ${grund}`);
+      return;
+    }
+    const namen = neu.drin.map((id) => {
+      var _a, _b, _c, _d, _e;
+      return `\u201E${(_e = (_d = (_b = (_a = this.o).zonenname) == null ? void 0 : _b.call(_a, id)) != null ? _d : (_c = zonen.find((z) => z.id === id)) == null ? void 0 : _c.name) != null ? _e : id}\u201C`;
+    });
+    this.o.log.info(
+      `App ${this.o.appId}: Zonen aktiv um ${um}, ${namen.length === 0 ? "in keiner Zone" : `drin: ${namen.join(", ")}`}`
+    );
   }
   // json zuletzt, wie bei den Benachrichtigungen. Koordinaten nie ins Log.
   standort(m) {

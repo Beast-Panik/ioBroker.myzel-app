@@ -106,6 +106,20 @@ export interface Handyeimer {
     zonen: Eimer;
     standort: Eimer;
     vorschlag: Eimer;
+    // Zuletzt ins Log geschriebener Zonenstand; jede neue Verbindung schickt den Stand wieder, das Log nennt nur Änderungen
+    imLog?: Zonenlog;
+}
+
+interface Zonenlog {
+    aktiv: boolean;
+    grund: string;
+    drin: string[];
+}
+
+// Uhrzeit vom Handy für das Log, in der Zeitzone des Adapters wie die Zeilen selbst; Nachgeliefertes erkennt man so
+function uhrzeit(ms: number): string {
+    const d = new Date(ms);
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
 }
 
 export function neueHandyeimer(g?: { zonenJeStunde: number; standortAbstandMs: number }): Handyeimer {
@@ -134,6 +148,7 @@ export class Handyeingang {
     private readonly zonenEimer: Eimer;
     private readonly standortEimer: Eimer;
     private readonly vorschlagEimer: Eimer;
+    private readonly eimer: Handyeimer;
     private readonly jetzt: () => number;
 
     public constructor(private readonly o: HandyeingangOptionen) {
@@ -141,6 +156,7 @@ export class Handyeingang {
         this.zonen = o.zonen;
         this.jetzt = o.jetzt ?? Date.now;
         const eimer = o.eimer ?? neueHandyeimer(o.grenzen);
+        this.eimer = eimer;
         this.zonenEimer = eimer.zonen;
         this.standortEimer = eimer.standort;
         this.vorschlagEimer = eimer.vorschlag;
@@ -173,6 +189,9 @@ export class Handyeingang {
     // zonen.aktiv false mit Grund, falls es den Datenpunkt gibt und er noch nicht so steht
     public zonenAus(grund: Adaptergrund): Promise<void> {
         this.reihe = this.reihe.then(async () => {
+            // In der Reihe, hinter einem Stand, der vorher kam: Der nächste nach dem Wiedereinschalten soll im Log
+            // stehen, auch wenn er dem letzten gleicht
+            this.eimer.imLog = undefined;
             try {
                 await meldeZonenAus(this.o.ablage, this.o.appId, grundText(grund, this.o.sprache()));
             } catch {
@@ -207,6 +226,20 @@ export class Handyeingang {
             });
             await this.o.ablage.schreibeZone(this.o.appId, id, name, z.drin, z.zeit);
             await this.o.ablage.schreibe(this.o.appId, { 'zonen.letzte': letzte }, z.zeit);
+            // Nur Name und Zeit, nie ein Ort; der folgende Stand mit derselben Lage steht dann nicht noch einmal da
+            this.o.log.info(
+                `App ${this.o.appId}: Zone „${name}“ ${z.drin ? 'betreten' : 'verlassen'} um ${uhrzeit(z.zeit)}`,
+            );
+            const imLog = this.eimer.imLog;
+            if (imLog?.aktiv) {
+                const drin = new Set(imLog.drin);
+                if (z.drin) {
+                    drin.add(id);
+                } else {
+                    drin.delete(id);
+                }
+                this.eimer.imLog = { ...imLog, drin: [...drin].sort() };
+            }
         });
     }
 
@@ -228,7 +261,35 @@ export class Handyeingang {
                 }
             }
             await this.o.ablage.schreibe(this.o.appId, { 'zonen.aktiv': s.aktiv, 'zonen.grund': grund }, s.zeit);
+            this.logStand(s, grund, zonen);
         });
+    }
+
+    // Nur, wenn sich etwas geändert hat; die Zonen mit Namen, nie ein Ort
+    private logStand(s: Zonenstand, grund: string, zonen: Zonenangabe[]): void {
+        const neu: Zonenlog = {
+            aktiv: s.aktiv,
+            grund,
+            drin: s.aktiv
+                ? zonen
+                      .map(z => z.id)
+                      .filter(id => s.drin.includes(id))
+                      .sort()
+                : [],
+        };
+        if (isDeepStrictEqual(neu, this.eimer.imLog)) {
+            return;
+        }
+        this.eimer.imLog = neu;
+        const um = uhrzeit(s.zeit);
+        if (!s.aktiv) {
+            this.o.log.info(`App ${this.o.appId}: Zonen nicht aktiv um ${um}: ${grund}`);
+            return;
+        }
+        const namen = neu.drin.map(id => `„${this.o.zonenname?.(id) ?? zonen.find(z => z.id === id)?.name ?? id}“`);
+        this.o.log.info(
+            `App ${this.o.appId}: Zonen aktiv um ${um}, ${namen.length === 0 ? 'in keiner Zone' : `drin: ${namen.join(', ')}`}`,
+        );
     }
 
     // json zuletzt, wie bei den Benachrichtigungen. Koordinaten nie ins Log.

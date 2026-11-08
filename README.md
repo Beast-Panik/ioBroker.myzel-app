@@ -106,6 +106,10 @@ Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
 
+### 0.9.0-alpha.1
+
+Vorabversion, nur über den Zweig `vorab` auf GitHub. Zonenwechsel und geänderte Zonenstände stehen im Log, etwa „Zone „Zuhause“ betreten um 17:42:10“ oder „Zonen nicht aktiv um 09:15:03: Standort am Handy aus“. Die Uhrzeit ist die vom Handy, die Zeile selbst trägt die Ankunft; Nachgeliefertes erkennt man so. Nur Namen, nie ein Ort. Den Stand, den jede neue Verbindung wieder schickt, nennt das Log nur, wenn er sich geändert hat
+
 ### 0.9.0-alpha.0
 
 Vorabversion für den Alltagstest der Zonen, nur über den Zweig `vorab` auf GitHub (`iobroker url https://github.com/Beast-Panik/ioBroker.myzel-app/tree/vorab`)

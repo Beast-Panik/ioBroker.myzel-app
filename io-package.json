@@ -1,8 +1,12 @@
 {
     "common": {
         "name": "myzel-app",
-        "version": "0.9.0-alpha.0",
+        "version": "0.9.0-alpha.1",
         "news": {
+            "0.9.0-alpha.1": {
+                "en": "Zone changes and changed zone states appear in the log with the zone name and the time on the phone, never a location. Pre-release, only via the branch vorab on GitHub",
+                "de": "Zonenwechsel und geänderte Zonenstände stehen im Log, mit dem Namen der Zone und der Uhrzeit vom Handy, nie mit einem Ort. Vorabversion, nur über den Zweig vorab auf GitHub"
+            },
             "0.9.0-alpha.0": {
                 "en": "Pre-release with zones: tab \"Zones\" for places, data types \"Zones\" and \"Location\" in the phone data dialog, protocol 7 (apps up to protocol 6 notice nothing). Turning zones off in the admin takes effect at once. A damaged app object no longer removes the pairing. Only via the branch vorab on GitHub",
                 "de": "Vorabversion mit Zonen: Reiter „Zonen“ für Orte, Datenarten „Zonen“ und „Standort“ im Dialog „Handydaten“, Protokoll 7 (Apps bis Protokoll 6 merken davon nichts). Zonen im Admin auszuschalten wirkt sofort. Ein beschädigtes App-Objekt hebt die Kopplung nicht mehr auf. Nur über den Zweig vorab auf GitHub"
