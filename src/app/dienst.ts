@@ -9,13 +9,23 @@ import { appSchluessel } from '../basis/fernschluessel';
 import { neueAppId, neuerZugang, passtZuHash, sha256 } from '../basis/kodierung';
 import type { Kopplung, Kopplungsanfrage } from '../basis/kopplung';
 import { Nachrichtenpruefer } from '../basis/schema';
-import { Anwesenheit, Handyeingang } from './handydaten';
+import type { Handyeimer } from './handydaten';
+import { Anwesenheit, Handyeingang, meldeZonenAus, neueHandyeimer } from './handydaten';
 import { Hinweise } from './hinweise';
-import type { Katalog } from './katalog';
-import { type AppDaten, type Appablage, appIdAus } from './objekte';
+import type { Katalog, Objektaenderung } from './katalog';
+import { type AppDaten, type Appablage, type Appstand, type Handydaten, appIdAus } from './objekte';
 import { FERN_SEIT, type Rechtestand, inhaltFuer, rechteFuer } from './rechte';
 import { Sitzung } from './sitzung';
 import { Abostelle, type Wert, Werteversand, type Zustandsquelle } from './werte';
+import {
+    type Mittelpunktvorschlag,
+    VORSCHLAG_MS,
+    ZONEN_SEIT,
+    grundText,
+    handydatenFuer,
+    zonenDerApp,
+    zonenFuer,
+} from './zonen';
 
 const NEUBERECHNUNG_MS = 2000;
 
@@ -62,6 +72,21 @@ interface Ferndaten {
     totS: number;
 }
 
+// Ob ein Zugang laut Objekt der App gilt. Fehlt das Objekt oder passt der Zugang nicht zum Hash darin, gilt er nicht,
+// auch wenn der Rest beschädigt ist. Sonst heißt beschädigt nur: vorerst nicht, die App behält ihre Kopplung.
+type Zugangslage = { art: 'ok'; daten: AppDaten } | { art: Exclude<Zugangspruefung, 'ok'> };
+
+function zugangslage(stand: Appstand, passt: (zugangHash: string) => boolean): Zugangslage {
+    if (stand.art === 'fehlt') {
+        return { art: 'unbekannt' };
+    }
+    const hash = stand.art === 'da' ? stand.daten.zugangHash : stand.zugangHash;
+    if (hash !== undefined && !passt(hash)) {
+        return { art: 'falsch' };
+    }
+    return stand.art === 'da' ? { art: 'ok', daten: stand.daten } : { art: 'beschaedigt' };
+}
+
 interface Angemeldet {
     sitzung: Sitzung;
     werte: Werteversand;
@@ -69,6 +94,8 @@ interface Angemeldet {
     zugangHash: string;
     version: number;
     fern?: Ferndaten;
+    // Was die App zuletzt als Freigabe bekommen hat; handy.handydaten kann schon enger sein (appGeaendert)
+    handydaten: Handydaten;
 }
 
 export class Dienst implements Anmeldeziel {
@@ -78,6 +105,11 @@ export class Dienst implements Anmeldeziel {
     private readonly abostelle: Abostelle;
     private readonly anwesenheit: Anwesenheit;
     private readonly hinweise: Hinweise;
+    // Je App der letzte Vorschlag für einen Mittelpunkt, nur im Speicher (KONZEPT-ZONEN.md, Abschnitt 17.7)
+    private readonly vorschlaege = new Map<string, Mittelpunktvorschlag & { bis: number }>();
+    // Mengen der Handydaten je App über alle Sitzungen; eine App, die immer wieder neu verbindet, bekäme sonst jedes Mal
+    // einen vollen Stoß
+    private readonly handyeimer = new Map<string, Handyeimer>();
     private vorgemerkt?: NodeJS.Timeout;
     private neuberechnung: Promise<void> = Promise.resolve();
     private beendet = false;
@@ -92,11 +124,37 @@ export class Dienst implements Anmeldeziel {
             verbindung: appId => this.sitzungen.get(appId)?.sitzung.verbindung,
         });
         o.katalog.beiAenderung(() => this.vormerken());
+        o.katalog.beiApp((appId, objekt) => this.appGeaendert(appId, objekt));
+    }
+
+    // Ausschalten im Admin gilt sofort, nicht erst mit der Neuberechnung nach rund 2 s: Danach schreibt der Adapter von
+    // der Datenart nichts mehr, auch keinen Standort. Einschalten kommt mit der Neuberechnung und ihrer Prüfung.
+    private appGeaendert(appId: string, objekt: Objektaenderung): void {
+        const handy = this.sitzungen.get(appId)?.handy;
+        if (!handy) {
+            return;
+        }
+        const native: unknown = objekt?.type === 'device' ? objekt.native : undefined;
+        const neu: unknown =
+            native && typeof native === 'object' ? (native as { handydaten?: unknown }).handydaten : {};
+        const an = (art: string): boolean =>
+            !!neu && typeof neu === 'object' && (neu as Record<string, unknown>)[art] === true;
+        handy.schraenkeEin(an, objekt ? 'admin' : 'entfernt');
     }
 
     // Adresse oder Geheimnis des Fernzugangs neu: Jede App bekommt den neuen Stand wie bei neuen Rechten.
     public fernzugangGeaendert(): void {
         this.vormerken();
+    }
+
+    // Die Vorschläge der letzten 15 Minuten, der neueste zuerst
+    public mittelpunktvorschlaege(jetzt = Date.now()): Mittelpunktvorschlag[] {
+        for (const [appId, v] of this.vorschlaege) {
+            if (v.bis <= jetzt) {
+                this.vorschlaege.delete(appId);
+            }
+        }
+        return [...this.vorschlaege.values()].sort((a, b) => b.zeit - a.zeit).map(({ bis: _bis, ...v }) => v);
     }
 
     // Weg je angemeldeter App
@@ -138,11 +196,7 @@ export class Dienst implements Anmeldeziel {
     }
 
     public async pruefeZugang(appId: string, zugang: string): Promise<Zugangspruefung> {
-        const daten = await this.o.ablage.lies(appId);
-        if (!daten) {
-            return 'unbekannt';
-        }
-        return passtZuHash(zugang, Buffer.from(daten.zugangHash, 'hex')) ? 'ok' : 'falsch';
+        return (await this.lageFuer(appId, zugang)).art;
     }
 
     public async angemeldet(v: Verbindung, hallo: Hallo): Promise<void> {
@@ -151,12 +205,19 @@ export class Dienst implements Anmeldeziel {
             v.schliesse(SCHLIESSCODE.zuviel, 'zu viele Anmeldungen');
             return;
         }
-        const daten = await this.o.ablage.lies(hallo.app);
-        if (!daten) {
+        // Noch einmal: Seit pruefeZugang kann das Objekt entfernt, beschädigt oder sein Zugang geändert worden sein.
+        const lage = await this.lageFuer(hallo.app, hallo.zugang);
+        if (lage.art === 'beschaedigt') {
+            v.sendeFehler('intern');
+            v.schliesse(SCHLIESSCODE.intern, 'Objekt beschädigt');
+            return;
+        }
+        if (lage.art !== 'ok') {
             v.sendeFehler('zugang');
             v.schliesse(SCHLIESSCODE.zugang, 'zugang');
             return;
         }
+        const daten = lage.daten;
         if (daten.geraet.android !== hallo.geraet.android || daten.geraet.appVersion !== hallo.geraet.appVersion) {
             daten.geraet = hallo.geraet;
             await this.o.ablage.aendere(hallo.app, { geraet: hallo.geraet });
@@ -174,9 +235,10 @@ export class Dienst implements Anmeldeziel {
             name: anfrage.name,
             zugangHash: sha256(zugang).toString('hex'),
             profil,
-            handydaten: { akku: false, anruf: false, benachrichtigung: false },
+            handydaten: { akku: false, anruf: false, benachrichtigung: false, zonen: false, standort: false },
             gekoppeltAm: Date.now(),
             geraet: anfrage.geraet,
+            zonenwahl: [],
         };
         await this.o.ablage.lege(appId, daten);
         this.o.log.info(`App ${appId} gekoppelt`);
@@ -189,18 +251,30 @@ export class Dienst implements Anmeldeziel {
     }
 
     // Sofort, nicht erst mit der Neuberechnung der Rechte: Der Zugang gilt ab jetzt nicht mehr.
+    // zonen.aktiv false, wie anwesend: Von der App kommt sicher nichts mehr.
     public async entferne(appId: string): Promise<void> {
         await this.o.ablage.entferne(appId);
         this.hinweise.vergiss(appId);
+        this.vorschlaege.delete(appId);
+        this.handyeimer.delete(appId);
         this.anwesenheit.entferne(appId);
-        this.sitzungen.get(appId)?.sitzung.verbindung.schliesse(SCHLIESSCODE.entfernt, 'entfernt');
+        const angemeldet = this.sitzungen.get(appId);
+        if (angemeldet) {
+            angemeldet.handy.schraenkeEin(() => false, 'entfernt');
+            angemeldet.sitzung.verbindung.schliesse(SCHLIESSCODE.entfernt, 'entfernt');
+        } else {
+            await meldeZonenAus(this.o.ablage, appId, grundText('entfernt', this.o.katalog.sprache)).catch(
+                (fehler: Error) => this.o.log.warn(`App ${appId}: Ende der Zonen nicht geschrieben: ${fehler.message}`),
+            );
+        }
         this.o.log.info(`App ${appId} entfernt`);
     }
 
     private async freieAppId(): Promise<string> {
         for (let versuch = 0; versuch < 5; versuch++) {
             const appId = neueAppId();
-            if (!(await this.o.ablage.lies(appId))) {
+            // Auch eine beschädigte App belegt ihre ID: Sie ist noch gekoppelt.
+            if ((await this.o.ablage.stand(appId)).art === 'fehlt') {
                 return appId;
             }
         }
@@ -240,6 +314,7 @@ export class Dienst implements Anmeldeziel {
             log: this.o.log,
             teilBytes: (this.o.grenzen ?? GRENZEN).teilBytes,
         });
+        const zonen = version >= ZONEN_SEIT ? zonenDerApp(daten, this.o.katalog.zonen()) : [];
         const handy = new Handyeingang({
             appId,
             verbindung: v,
@@ -247,6 +322,12 @@ export class Dienst implements Anmeldeziel {
             log: this.o.log,
             textLaenge: this.o.textLaenge,
             handydaten: daten.handydaten,
+            version,
+            zonen,
+            zonenname: zone => this.o.katalog.zone(zone)?.name,
+            sprache: () => this.o.katalog.sprache,
+            vorschlag: v => this.vorschlaege.set(appId, { appId, ...v, bis: Date.now() + VORSCHLAG_MS }),
+            eimer: this.eimerFuer(appId),
         });
         const sitzung = new Sitzung(appId, v, {
             pruefer: this.o.pruefer,
@@ -259,11 +340,23 @@ export class Dienst implements Anmeldeziel {
                 benachrichtigung: m => handy.benachrichtigung(m),
                 auswahl: m => handy.auswahl(m),
                 angezeigt: m => this.hinweise.angezeigt(appId, m.id as string),
+                zone: m => handy.zone(m),
+                zonenstand: m => handy.zonenstand(m),
+                standort: m => handy.standort(m),
+                vorschlag: m => handy.vorschlag(m),
             },
             grenzen: this.o.grenzen,
         });
         const alt = this.sitzungen.get(appId);
-        this.sitzungen.set(appId, { sitzung, werte, handy, zugangHash: daten.zugangHash, version, fern });
+        this.sitzungen.set(appId, {
+            sitzung,
+            werte,
+            handy,
+            zugangHash: daten.zugangHash,
+            version,
+            fern,
+            handydaten: daten.handydaten,
+        });
         if (alt) {
             this.o.log.info(`App ${appId}: neue Verbindung ersetzt die bisherige`);
             alt.sitzung.verbindung.schliesse(SCHLIESSCODE.ersetzt, 'ersetzt');
@@ -276,7 +369,13 @@ export class Dienst implements Anmeldeziel {
             werte.beende().catch((fehler: Error) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
         });
         // Ein Entfernen während der Anmeldung fand die Sitzung noch nicht; ab hier findet es sie, davor sieht es dieses Lesen.
-        if ((await this.o.ablage.lies(appId))?.zugangHash !== daten.zugangHash) {
+        const nachher = zugangslage(await this.o.ablage.stand(appId), hash => hash === daten.zugangHash);
+        if (nachher.art === 'beschaedigt') {
+            this.o.log.info(`App ${appId}: Objekt während der Anmeldung beschädigt, Verbindung beendet`);
+            v.schliesse(SCHLIESSCODE.intern, 'Objekt beschädigt');
+            return;
+        }
+        if (nachher.art !== 'ok') {
             this.o.log.info(`App ${appId} während der Anmeldung entfernt, Verbindung beendet`);
             v.schliesse(SCHLIESSCODE.entfernt, 'entfernt');
             return;
@@ -287,13 +386,33 @@ export class Dienst implements Anmeldeziel {
             adapter: this.o.adapterId,
             adressen,
             ...inhaltFuer(rechte.inhalt, version),
-            handydaten: daten.handydaten,
+            handydaten: handydatenFuer(daten.handydaten, version),
+            ...zonenFuer(daten, this.o.katalog.zonen(), version),
             ...(fern && { fern }),
         });
         this.o.log.info(`App ${appId} verbunden über ${v.herkunft.weg} von ${v.herkunft.adresse}`);
         await this.o.ablage.schreibe(appId, { online: true, weg: v.herkunft.weg });
         await this.anwesenheit.angemeldet(appId, v.herkunft.weg);
         await this.hinweise.angemeldet(appId, v);
+        if (version >= ZONEN_SEIT) {
+            // Ausgeschaltet bleiben Wahl und Datenpunkte, gelöscht oder abgewählt verschwinden sie, auch wenn das geschah,
+            // während die App nicht verbunden war
+            const wahl = new Set(daten.zonenwahl ?? []);
+            void handy.entferneUebrige(zone => wahl.has(zone) && this.o.katalog.gibtZone(zone));
+        } else {
+            // Etwa nach einer Rücksicherung einer älteren App: Sie meldet keine Zonen mehr
+            void handy.zonenAus('veraltet');
+        }
+    }
+
+    private eimerFuer(appId: string): Handyeimer {
+        const da = this.handyeimer.get(appId);
+        if (da) {
+            return da;
+        }
+        const neu = neueHandyeimer();
+        this.handyeimer.set(appId, neu);
+        return neu;
     }
 
     // Gesammelt, weil eine Änderung selten allein kommt: Ein Adapter legt beim Start viele Objekte an.
@@ -312,16 +431,24 @@ export class Dienst implements Anmeldeziel {
     private async berechneNeu(): Promise<void> {
         const jeProfil = new Map<string, Rechtestand>();
         for (const [appId, angemeldet] of [...this.sitzungen]) {
-            const daten = await this.o.ablage.lies(appId);
+            const stand = await this.o.ablage.stand(appId);
             if (this.beendet || this.sitzungen.get(appId) !== angemeldet) {
                 continue;
             }
             const { sitzung, werte, handy } = angemeldet;
-            if (daten?.zugangHash !== angemeldet.zugangHash) {
+            const lage = zugangslage(stand, hash => hash === angemeldet.zugangHash);
+            // Mit 1011 statt 4008 behält die App ihre Kopplung und meldet sich wieder an, sobald das Objekt heil ist.
+            if (lage.art === 'beschaedigt') {
+                this.o.log.info(`App ${appId}: Objekt beschädigt, Verbindung beendet, die App bleibt gekoppelt`);
+                sitzung.verbindung.schliesse(SCHLIESSCODE.intern, 'Objekt beschädigt');
+                continue;
+            }
+            if (lage.art !== 'ok') {
                 this.o.log.info(`App ${appId} entfernt oder Zugang geändert, Verbindung beendet`);
                 sitzung.verbindung.schliesse(SCHLIESSCODE.entfernt, 'entfernt');
                 continue;
             }
+            const daten = lage.daten;
             const fern = this.fernFuer(appId, daten, angemeldet.version);
             if (sitzung.verbindung.herkunft.weg === 'fern' && !fern) {
                 this.o.log.info(`App ${appId}: Fernzugang ausgeschaltet, Verbindung über den Vermittler beendet`);
@@ -334,7 +461,14 @@ export class Dienst implements Anmeldeziel {
             const fuerApp = inhaltFuer(rechte.inhalt, angemeldet.version);
             const rechteNeu = !isDeepStrictEqual(fuerApp, inhaltFuer(werte.rechte.inhalt, angemeldet.version));
             const fernNeu = !isDeepStrictEqual(fern, angemeldet.fern);
-            if (!rechteNeu && !fernNeu && isDeepStrictEqual(daten.handydaten, handy.handydaten)) {
+            const zonen = angemeldet.version >= ZONEN_SEIT ? zonenDerApp(daten, this.o.katalog.zonen()) : [];
+            if (
+                !rechteNeu &&
+                !fernNeu &&
+                isDeepStrictEqual(daten.handydaten, angemeldet.handydaten) &&
+                isDeepStrictEqual(daten.handydaten, handy.handydaten) &&
+                isDeepStrictEqual(zonen, handy.zonen)
+            ) {
                 continue;
             }
             if (rechteNeu) {
@@ -342,9 +476,22 @@ export class Dienst implements Anmeldeziel {
                     .neueRechte(rechte)
                     .catch((fehler: Error) => this.o.log.error(`Abo der App ${appId}: ${fehler.message}`));
             }
-            handy.handydaten = daten.handydaten;
+            handy.uebernimm(daten.handydaten);
+            angemeldet.handydaten = daten.handydaten;
+            // Ausgeschaltet behält die App ihre Wahl und die Datenpunkte bleiben; entzogen oder gelöscht verschwinden sie.
+            // Eine gerade unbrauchbare Zone fehlt auf dem Handy, ihr Datenpunkt bleibt.
+            const gewaehlt = new Set(daten.zonenwahl ?? []);
+            const entzogen = handy.zonen.map(z => z.id).filter(id => !gewaehlt.has(id) || !this.o.katalog.gibtZone(id));
+            handy.zonen = zonen;
+            void handy.entferneZonen(entzogen);
             angemeldet.fern = fern;
-            sitzung.verbindung.sende({ t: 'rechte', ...fuerApp, handydaten: daten.handydaten, ...(fern && { fern }) });
+            sitzung.verbindung.sende({
+                t: 'rechte',
+                ...fuerApp,
+                handydaten: handydatenFuer(daten.handydaten, angemeldet.version),
+                ...zonenFuer(daten, this.o.katalog.zonen(), angemeldet.version),
+                ...(fern && { fern }),
+            });
             this.o.log.debug(`App ${appId}: neue Rechte, ${rechte.inhalt.karten.length} Karten`);
         }
     }
@@ -365,6 +512,10 @@ export class Dienst implements Anmeldeziel {
         }
         this.anmeldungen.set(appId, { marken: marken - 1, zeit: jetzt, gemeldet: false });
         return true;
+    }
+
+    private async lageFuer(appId: string, zugang: string): Promise<Zugangslage> {
+        return zugangslage(await this.o.ablage.stand(appId), hash => passtZuHash(zugang, Buffer.from(hash, 'hex')));
     }
 
     private fernFuer(appId: string, daten: AppDaten, version: number): Ferndaten | undefined {

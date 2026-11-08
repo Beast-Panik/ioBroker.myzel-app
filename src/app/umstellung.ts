@@ -3,6 +3,7 @@ import type { Katalogquelle } from './katalog';
 import { karteAusZeile, lies, profilAusZeile } from './konfiguration';
 import type { Eintragsablage, Ordner } from './objekte';
 import { KARTENARTEN, alsEtage, alsKarte, alsProfil, istKennung, liegtUnter } from './rechte';
+import { alsZone } from './zonen';
 
 const LAMPENTEILE = Object.keys(KARTENARTEN.lampe.teile);
 
@@ -17,6 +18,7 @@ const BRAUCHBAR: Record<Ordner, (native: unknown) => boolean> = {
     karten: native => !Array.isArray(alsKarte(native)),
     profile: native => !Array.isArray(alsProfil(native)),
     etagen: native => !Array.isArray(alsEtage(native)),
+    zonen: native => !Array.isArray(alsZone(native)),
 };
 
 /**

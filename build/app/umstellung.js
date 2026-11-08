@@ -23,11 +23,13 @@ __export(umstellung_exports, {
 module.exports = __toCommonJS(umstellung_exports);
 var import_konfiguration = require("./konfiguration");
 var import_rechte = require("./rechte");
+var import_zonen = require("./zonen");
 const LAMPENTEILE = Object.keys(import_rechte.KARTENARTEN.lampe.teile);
 const BRAUCHBAR = {
   karten: (native) => !Array.isArray((0, import_rechte.alsKarte)(native)),
   profile: (native) => !Array.isArray((0, import_rechte.alsProfil)(native)),
-  etagen: (native) => !Array.isArray((0, import_rechte.alsEtage)(native))
+  etagen: (native) => !Array.isArray((0, import_rechte.alsEtage)(native)),
+  zonen: (native) => !Array.isArray((0, import_zonen.alsZone)(native))
 };
 async function stelleUm(namespace, quelle, einstellungen, ablage, log) {
   const loeschen = [];

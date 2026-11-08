@@ -75,6 +75,12 @@ class Anmeldung {
     if (!v.offen) {
       return;
     }
+    if (ergebnis === "beschaedigt") {
+      v.sendeFehler("intern");
+      v.schliesse(import_kern.SCHLIESSCODE.intern, "Objekt besch\xE4digt");
+      this.o.log.debug(`Anmeldung von ${v.herkunft.adresse} abgewiesen: Objekt der App ${hallo.app} besch\xE4digt`);
+      return;
+    }
     if (ergebnis !== "ok") {
       this.lehneAb(
         v,

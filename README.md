@@ -37,6 +37,8 @@ Vorschläge (0.6.0): Der Knopf „Vorschläge“ im Reiter Karten zeigt, wie vie
 
 Fernzugang (0.8.0): Unterwegs erreicht die App den Adapter über einen eigenen Vermittler (vermittler/, KONZEPT-FERNZUGANG.md). Der Adapter wählt sich selbst beim Vermittler ein, zu Hause öffnet sich kein Port. TLS geht wie im Heimnetz von der App bis in den Adapter; der Vermittler reicht nur verschlüsselte Bytes weiter und kann sich weder als App noch als Adapter ausgeben. Der Reiter „Fernzugang“ nimmt die Adresse des Vermittlers, zeigt den Stand der Verbindung und die Zeile für die `.env` des Vermittlers, gibt den Fernzugang je App frei (Vorgabe aus) und erzeugt nach einer Rückfrage einen neuen Schlüssel; danach braucht der Vermittler die neue Zeile. Adresse und Geheimnis liegen im Objekt `fernzugang`, das Geheimnis verschlüsselt. Freigegebene Apps ab Protokoll 6 bekommen Adresse und Schlüssel beim Verbinden im Heimnetz; Ausschalten trennt eine Sitzung über den Vermittler sofort (4010). Über den Vermittler steht `apps.<id>.weg` auf `fern`, im Heimnetz auf `lokal`, ohne Verbindung leer; die Karte der App im Reiter Apps zeigt das als „Heimnetz“, „Vermittler“ oder „Getrennt“ (0.8.1); `anwesend` setzt weiter nur das Heimnetz, gekoppelt wird nur dort. `info.fernzugang` zeigt, ob die Verbindung zum Vermittler steht. Lebenszeichen über den Vermittler alle 10 Minuten, Schluss nach 25 Minuten ohne Antwort. Zum Schutz des Heimanschlusses wächst der Abstand zwischen Versuchen und beginnt erst nach einer Minute stabiler Verbindung wieder bei 1 s; höchstens 30 Sitzungen je 10 Minuten. Braucht Myzel Home ab 0.7.0; ältere Apps verbinden sich weiter nur im Heimnetz.
 
+Zonen (in Arbeit, Z1 aus KONZEPT-ZONEN.md, Abschnitt 16): Der Reiter „Zonen“ legt Orte an, je mit Name, fester ID für Skripte, Mittelpunkt als „Breite, Länge“ und Radius von 100 bis 10 000 m, höchstens 20, als Objekte `zonen.<id>`. Im Dialog „Handydaten“ des Reiters Apps gibt es zwei neue Datenarten, „Zonen“ mit der Wahl der Zonen je App und „Standort“, beide aus als Vorgabe. Apps ab Protokoll 7 bekommen nur ihre Zonen und melden Betreten und Verlassen nach `apps.<id>.zonen.<zone>` und `zonen.letzte`, ob sie Zonen erkennen können nach `zonen.aktiv` und `zonen.grund`, den Standort nach `standort.*`. Höchstens 60 Zonenmeldungen je Stunde und ein Standort je Minute; Koordinaten nie im Log. Umbenennen gilt sofort für die Datenpunkte; eine gelöschte oder entzogene Zone verliert ihren Datenpunkt bei allen Apps, ausgeschaltet bleibt er. Die App kann das noch nicht.
+
 ## Entwickeln
 
 ```
@@ -65,7 +67,9 @@ npm run simulator -- verbinden --adresse 127.0.0.1:18095    # Test-ioBroker in D
 ```
 
 Danach Befehle je Zeile, etwa `abo 0_userdata.0.lampe`, `setze 0_userdata.0.lampe true`, `akku 80 laedt`,
-`anruf klingelt eingehend +49301234 "Anna B"`, `angezeigt <id>`, `roh {"t":"x"}`, `ende`; `hilfe` zeigt alle.
+`anruf klingelt eingehend +49301234 "Anna B"`, ab Protokoll 7 `zone zuhause rein`, `zonenstand an zuhause`,
+`zonenstand aus hintergrund`, `standort 50.9413 6.9583 12`, dazu `angezeigt <id>`, `roh {"t":"x"}`, `ende`; `hilfe`
+zeigt alle.
 Die Kopplung samt Zugang liegt in `app-simulator.local.json`, nur für den Eigentümer lesbar und von git ignoriert.
 Der Simulator prüft den Fingerabdruck im TLS-Handshake, jede Nachricht des Adapters und jede eigene am Schema.
 
@@ -101,6 +105,18 @@ docker exec -u iobroker myzel-iobroker-dev-iobroker-1 iobroker start myzel-app.0
 Test-ioBroker: siehe `dev/docker-compose.yml` im Hauptrepository.
 
 ## Changelog
+
+### 0.9.0-alpha.0
+
+Vorabversion für den Alltagstest der Zonen, nur über den Zweig `vorab` auf GitHub (`iobroker url https://github.com/Beast-Panik/ioBroker.myzel-app/tree/vorab`)
+
+Zonen, Teil Adapter (Z1): Reiter „Zonen“ zum Anlegen, Ändern und Löschen von Orten; Datenarten „Zonen“ mit Wahl der Zonen und „Standort“ im Dialog „Handydaten“. Protokoll 7 mit `zonen` in `willkommen` und `rechte` und den Nachrichten `zone`, `zonenstand` und `standort`; Apps bis Protokoll 6 merken davon nichts. Datenpunkte `apps.<id>.zonen.*` und `apps.<id>.standort.*`. Der Simulator kennt die neuen Nachrichten
+
+Zonen, Teil App (Z2): Grund `aus` für „in der App ausgeschaltet“; Nachricht `vorschlag` mit einem Standort vom Handy, der im Dialog einer Zone 15 Minuten lang als „Vom Handy übernehmen“ steht. Gespeichert wird er nur im Speicher und nur, wenn jemand ihn übernimmt und die Zone speichert
+
+Ein beschädigtes Objekt `apps.<id>`, etwa nach einem fehlerhaften `iobroker object set`, hebt die Kopplung nicht mehr auf. Der Adapter trennt die App mit 1011 statt 4008 oder 4001; sie behält ihren Zugang, versucht es weiter und ist wieder verbunden, sobald das Objekt heil ist. Anmelden kann sie sich ohne gültiges Objekt weiterhin nicht. Fehlt das Objekt oder steht darin ein anderer Zugang, ist die Kopplung wie bisher aufgehoben. Gewarnt wird einmal je App, nicht bei jedem Versuch. Gilt auch für alle schon installierten Apps
+
+Sicherheitsprüfung der Zonen (Z4): Zonen im Admin auszuschalten wirkt sofort, ein Stand danach setzt `zonen.aktiv` nicht wieder auf `true`. Eine neue Zone unter der ID einer gelöschten geht nicht ungefragt an deren Apps. Höchstens 20 Zonen je App. Die Mengen gelten je App über alle Sitzungen. Nach „Entfernen“ und bei Apps mit Protokoll 6 steht `zonen.aktiv` auf `false` mit Grund. Umbenennen außerhalb des Reiters behält die übrigen Einstellungen des Datenpunkts, eine kurz unbrauchbare Zone löscht ihn nicht
 
 ### 0.8.1
 

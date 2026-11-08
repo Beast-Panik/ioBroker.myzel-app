@@ -16,6 +16,7 @@ import type { AppDaten, Appablage, Handydaten } from '../app/objekte';
 import { type Profil, sicht } from '../app/rechte';
 import { GRENZEN, type Protokoll } from '../basis/grenzen';
 import { type Kopplung, type Kopplungsanfrage, qrInhalt } from '../basis/kopplung';
+import { grundText } from '../app/zonen';
 
 type Text = ioBroker.Translated;
 
@@ -61,13 +62,23 @@ const T = {
     akku: { en: 'Battery', de: 'Akku' },
     anruf: { en: 'Calls', de: 'Anrufe' },
     benachrichtigung: { en: 'Notifications', de: 'Benachrichtigungen' },
+    zonen: { en: 'Zones', de: 'Zonen' },
+    standort: {
+        en: 'Location (latitude, longitude and accuracy, at most every 5 minutes)',
+        de: 'Standort (Breite, Länge und Genauigkeit, höchstens alle 5 Minuten)',
+    },
+    keineZonen: {
+        en: 'No zones yet. They are created in the Zones tab of the instance settings.',
+        de: 'Noch keine Zonen. Sie entstehen im Reiter „Zonen“ der Instanzeinstellungen.',
+    },
+    zonenAktiv: { en: 'Zones: detecting zones', de: 'Zonen: erkennt Zonen' },
     handydatenHinweis: {
         en: 'Each data type must also be switched on in the app. Switched off types are rejected and not written.',
         de: 'Jede Datenart muss auch in der App eingeschaltet sein. Was hier aus ist, lehnt der Adapter ab und schreibt nichts.',
     },
     persoenlich: {
-        en: 'Calls and notifications contain personal data: phone numbers, contact names, message texts. Every adapter and script can read them. A history adapter on these data points stores them permanently.',
-        de: 'Anrufe und Benachrichtigungen enthalten persönliche Daten: Rufnummern, Kontaktnamen, Nachrichtentexte. Jeder Adapter und jedes Skript kann sie lesen. Ein History-Adapter auf diesen Datenpunkten speichert sie dauerhaft.',
+        en: 'Calls, notifications, zones and location contain personal data: phone numbers, contact names, message texts, when someone is where. Every adapter and script can read them. A history adapter on these data points stores them permanently, for zones and location as a movement profile.',
+        de: 'Anrufe, Benachrichtigungen, Zonen und Standort enthalten persönliche Daten: Rufnummern, Kontaktnamen, Nachrichtentexte, wann jemand wo ist. Jeder Adapter und jedes Skript kann sie lesen. Ein History-Adapter auf diesen Datenpunkten speichert sie dauerhaft, bei Zonen und Standort als Bewegungsprofil.',
     },
     laeuftNicht: {
         en: 'The adapter is not running. The cause is in the log.',
@@ -218,19 +229,59 @@ export class Verwaltung {
         });
     }
 
+    // Variante B aus KONZEPT-ZONEN.md, Abschnitt 16.2: Zonen und Standort neben den übrigen Datenarten, darunter die
+    // Wahl der Zonen. Die Wahl bleibt beim Ausschalten, damit Einschalten sie wiederherstellt.
     public handydaten(appId: string, ctx: ActionContext): Promise<DeviceRefreshResponse<string>> {
         return this.sicherFuerApp(appId, ctx, 'Handydaten', async (b, daten) => {
+            const zonen = b.katalog.zonen();
+            const wahl = new Set(daten.zonenwahl ?? []);
+            const feld = (id: string): string => `zone_${id}`;
+            const zonenfelder: Record<string, ConfigItemAny> =
+                zonen.length === 0
+                    ? {
+                          keineZonen: {
+                              type: 'staticText',
+                              text: T.keineZonen,
+                              xs: 12,
+                              newLine: true,
+                              hidden: '!data.zonen',
+                          },
+                      }
+                    : Object.fromEntries(
+                          zonen.map(([id, z]) => [
+                              feld(id),
+                              {
+                                  type: 'checkbox',
+                                  label: z.name,
+                                  xs: 12,
+                                  newLine: true,
+                                  hidden: '!data.zonen',
+                                  // Eingerückt unter „Zonen“ wie im Entwurf (design/zonen.html, Variante B)
+                                  style: { paddingLeft: 28 },
+                              },
+                          ]),
+                      );
+            const stand = await this.zonenstand(b, appId);
             const antwort = await ctx.showForm(
                 panel({
                     hinweis: { type: 'staticText', text: T.handydatenHinweis, xs: 12 },
                     akku: { type: 'checkbox', label: T.akku, xs: 12, newLine: true },
                     anruf: { type: 'checkbox', label: T.anruf, xs: 12, newLine: true },
                     benachrichtigung: { type: 'checkbox', label: T.benachrichtigung, xs: 12, newLine: true },
+                    zonen: { type: 'checkbox', label: T.zonen, xs: 12, newLine: true },
+                    ...zonenfelder,
+                    standort: { type: 'checkbox', label: T.standort, xs: 12, newLine: true },
                     persoenlich: { type: 'staticText', text: T.persoenlich, xs: 12, newLine: true },
+                    ...(stand && { zonenstand: { type: 'staticText', text: stand, xs: 12, newLine: true } }),
                 }),
                 {
                     title: mitName(daten.name, T.handydaten),
-                    data: { ...daten.handydaten },
+                    data: {
+                        ...daten.handydaten,
+                        zonen: daten.handydaten.zonen === true,
+                        standort: daten.handydaten.standort === true,
+                        ...Object.fromEntries(zonen.map(([id]) => [feld(id), wahl.has(id)])),
+                    },
                     buttons: ['cancel', 'apply'],
                 },
             );
@@ -239,13 +290,62 @@ export class Verwaltung {
                     akku: antwort.akku === true,
                     anruf: antwort.anruf === true,
                     benachrichtigung: antwort.benachrichtigung === true,
+                    zonen: antwort.zonen === true,
+                    standort: antwort.standort === true,
                 };
-                if (JSON.stringify(handydaten) !== JSON.stringify(daten.handydaten)) {
-                    await b.ablage.aendere(appId, { handydaten });
+                // Nur Zonen, die es nach dem Dialog noch gibt; eine inzwischen gelöschte, etwa in einem anderen Tab, fällt so
+                // aus der Wahl und kommt mit einer neuen Zone derselben ID nicht ungefragt zurück
+                const zonenwahl = zonen
+                    .map(([id]) => id)
+                    .filter(id => antwort[feld(id)] === true && b.katalog.gibtZone(id));
+                const vorher = {
+                    ...daten.handydaten,
+                    zonen: daten.handydaten.zonen === true,
+                    standort: daten.handydaten.standort === true,
+                };
+                const wahlNeu = JSON.stringify(zonenwahl) !== JSON.stringify(daten.zonenwahl ?? []);
+                if (JSON.stringify(handydaten) !== JSON.stringify(vorher) || wahlNeu) {
+                    await b.ablage.aendere(appId, { handydaten, zonenwahl });
                 }
+                await this.raeumeZonenAuf(b, appId, zonenwahl, vorher.zonen && !handydaten.zonen);
             }
             return GERAETE;
         });
+    }
+
+    // Datenpunkte von Zonen, die die App nicht mehr bekommt, verschwinden. Endet die Freigabe, sagen zonen.aktiv und
+    // zonen.grund es, falls es sie schon gibt.
+    private async raeumeZonenAuf(
+        b: Betrieb,
+        appId: string,
+        zonenwahl: string[],
+        ausgeschaltet: boolean,
+    ): Promise<void> {
+        for (const zone of await b.ablage.zonenpunkte(appId)) {
+            if (!zonenwahl.includes(zone)) {
+                await b.ablage.entferneZone(appId, zone);
+            }
+        }
+        if (ausgeschaltet && (await b.ablage.zustand(appId, 'zonen.aktiv'))) {
+            await b.ablage.schreibe(appId, {
+                'zonen.aktiv': false,
+                'zonen.grund': grundText('admin', b.katalog.sprache),
+            });
+        }
+    }
+
+    // Was die App zuletzt zu den Zonen gemeldet hat; undefined, solange sie nichts gemeldet hat
+    private async zonenstand(b: Betrieb, appId: string): Promise<ioBroker.StringOrTranslated | undefined> {
+        const aktiv = await b.ablage.zustand(appId, 'zonen.aktiv');
+        if (typeof aktiv?.val !== 'boolean') {
+            return undefined;
+        }
+        if (aktiv.val) {
+            return T.zonenAktiv;
+        }
+        const grund = (await b.ablage.zustand(appId, 'zonen.grund'))?.val;
+        const text = typeof grund === 'string' && grund !== '' ? grund : '-';
+        return { en: `Zones disturbed: ${text}`, de: `Zonen gestört: ${text}` };
     }
 
     public entferne(appId: string, ctx: ActionContext): Promise<DeviceRefreshResponse<string>> {

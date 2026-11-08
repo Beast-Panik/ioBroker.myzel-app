@@ -1,6 +1,7 @@
-// Gemeinsam für die Seiten in den Reitern „Karten“, „Räume“, „Profile“ (KONZEPT-KARTEN.md, Abschnitte 12 und 13) und
-// „Fernzugang“ (KONZEPT-FERNZUGANG.md, Abschnitt 12) der Instanzeinstellungen: Verbindung zur Instanz, Thema, Texte, Kacheln,
-// Dialog. Die Seiten zeigen nur und fragen; prüfen und speichern tut die Instanz über sendTo (src/admin/).
+// Gemeinsam für die Seiten in den Reitern „Karten“, „Räume“, „Profile“ (KONZEPT-KARTEN.md, Abschnitte 12 und 13),
+// „Fernzugang“ (KONZEPT-FERNZUGANG.md, Abschnitt 12) und „Zonen“ (KONZEPT-ZONEN.md, Abschnitt 16) der
+// Instanzeinstellungen: Verbindung zur Instanz, Thema, Texte, Kacheln, Dialog. Die Seiten zeigen nur und fragen; prüfen
+// und speichern tut die Instanz über sendTo (src/admin/).
 
 export const instanz = new URLSearchParams(location.search).get('instanz');
 
@@ -41,6 +42,7 @@ const SYMBOLE = {
     thermostat: 'M10 13.5V5a2 2 0 1 1 4 0v8.5a4 4 0 1 1-4 0zM12 9v6',
     profil: 'M12 12a4 4 0 1 0 0-8a4 4 0 1 0 0 8zM4.5 21a7.5 7.5 0 0 1 15 0',
     raum: 'M4 20V10l8-6 8 6v10M4 20h16M10 20v-5h4v5',
+    zone: 'M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10zM12 13a2 2 0 1 0 0-4a2 2 0 1 0 0 4z',
     zahnrad:
         'M19 9.8L21.5 10.4L21.5 13.6L19 14.2L18.5 15.4L19.8 17.5L17.5 19.8L15.4 18.5L14.2 19L13.6 21.5L10.4 21.5' +
         'L9.8 19L8.6 18.5L6.5 19.8L4.2 17.5L5.5 15.4L5 14.2L2.5 13.6L2.5 10.4L5 9.8L5.5 8.6L4.2 6.5L6.5 4.2L8.6 5.5' +

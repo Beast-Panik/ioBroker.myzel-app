@@ -165,9 +165,13 @@ describe('App-Simulator gegen den Server', function () {
 
         const sitzung = starte(['verbinden', '--datei', datei, '--bestaetigen']);
         await bis(() => sitzung.aus.some(z => z.startsWith('< {"t":"willkommen"')));
-        sitzung.ein.write('abo zigbee.0.lampe.state\nsetze zigbee.0.lampe.state true\nsetze\n');
+        sitzung.ein.write('abo zigbee.0.lampe.state\nsetze zigbee.0.lampe.state true\nsetze\nzone Zuhause rein\n');
         await bis(() => sitzung.aus.some(z => z.startsWith('< {"t":"quittung"')));
-        expect(sitzung.aus.filter(z => z.startsWith('! nicht gesendet'))).to.have.length(1);
+        expect(sitzung.aus.filter(z => z.startsWith('! nicht gesendet'))).to.have.length(2);
+        // Protokoll 7: Zonen und Standort gehen hinaus, der Adapter lehnt sie ab, solange sie aus sind
+        sitzung.ein.write('zone zuhause rein\nzonenstand aus hintergrund\nstandort 50.9413 6.9583 12\n');
+        await bis(() => sitzung.aus.filter(z => z.includes('"code":"aus"')).length === 3);
+        expect(sitzung.aus.filter(z => /^> \{"t":"(zone|zonenstand|standort)"/.test(z))).to.have.length(3);
         expect(sitzung.aus.some(z => z.startsWith('< {"t":"werte"'))).to.equal(true);
         const state = ablage.skript(appId!, 'hinweis.senden', 'Paket ist da');
         server.geaendert(`${NAMESPACE}.apps.${appId}.hinweis.senden`, state);

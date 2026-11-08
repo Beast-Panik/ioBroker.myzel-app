@@ -156,9 +156,19 @@ async function main(): Promise<void> {
             return {};
         },
         handydaten: async b => {
-            await ablage.aendere(b.app, { handydaten: b.handydaten });
+            await ablage.aendere(b.app, { handydaten: b.handydaten, ...(b.zonenwahl && { zonenwahl: b.zonenwahl }) });
             return {};
         },
+        // Eine Zone im Reiter anlegen, ändern oder mit zone null löschen
+        zone: b => {
+            quelle.zone(b.id, b.zone ?? null);
+            return {};
+        },
+        // Datenpunkte unter zonen und die Vorschläge für Mittelpunkte
+        appzonen: b => ({
+            zonen: Object.fromEntries(ablage.zonen_.get(b.app) ?? []),
+            vorschlaege: server.dienst.mittelpunktvorschlaege(),
+        }),
         // Freigabe des Fernzugangs, wie im Reiter; wartet, bis der Vermittler die Liste hat
         fern: async b => {
             await ablage.aendere(b.app, { fern: b.an });
@@ -183,6 +193,18 @@ async function main(): Promise<void> {
         },
         entfernen: async b => {
             await server.dienst.entferne(b.app);
+            return {};
+        },
+        // Wie ein fehlerhaftes object set: Das Objekt der App ist da, aber nicht lesbar, bis heilen
+        beschaedigen: b => {
+            const objekt = { type: 'device', native: { ...ablage.apps.get(b.app), handydaten: 'kaputt' } };
+            ablage.beschaedigt_.set(b.app, objekt);
+            quelle.objekt_(`${NAMESPACE}.apps.${b.app}`, objekt);
+            return {};
+        },
+        heilen: b => {
+            ablage.beschaedigt_.delete(b.app);
+            quelle.app(b.app, ablage.apps.get(b.app));
             return {};
         },
         hinweis: b => {

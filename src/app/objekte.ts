@@ -9,6 +9,9 @@ export interface Handydaten {
     akku: boolean;
     anruf: boolean;
     benachrichtigung: boolean;
+    // Ab 0.9.0; fehlen bei Apps aus der Zeit davor und gelten dann als aus
+    zonen?: boolean;
+    standort?: boolean;
 }
 
 export interface AppDaten {
@@ -20,6 +23,9 @@ export interface AppDaten {
     geraet: Geraet;
     // Fernzugang über den Vermittler freigegeben; fehlt bei Apps aus der Zeit davor
     fern?: boolean;
+    // IDs der Zonen, die diese App bekommt, wenn die Datenart Zonen an ist; bleibt beim Ausschalten, damit Einschalten
+    // die Wahl wiederherstellt
+    zonenwahl?: string[];
 }
 
 export interface Hinweis {
@@ -41,9 +47,16 @@ export interface Hinweisstand {
     pruefsumme: string;
 }
 
+// Wie es um das Objekt einer App steht. Beschädigt heißt: da, aber nicht lesbar, etwa nach einem fehlerhaften
+// object set. zugangHash steht dabei, wenn wenigstens er noch lesbar ist.
+export type Appstand = { art: 'da'; daten: AppDaten } | { art: 'fehlt' } | { art: 'beschaedigt'; zugangHash?: string };
+
 // Eigene Schnittstelle, damit die Abläufe ohne ioBroker testbar sind.
 export interface Appablage {
+    // Für alle, denen eine beschädigte App so viel gilt wie eine unbekannte
     lies(appId: string): Promise<AppDaten | undefined>;
+    // Für Anmeldung und Sitzung: Nur ein fehlendes Objekt oder ein anderer Zugang heben die Kopplung auf.
+    stand(appId: string): Promise<Appstand>;
     alle(): Promise<string[]>;
     lege(appId: string, daten: AppDaten): Promise<void>;
     aendere(appId: string, daten: Partial<AppDaten>): Promise<void>;
@@ -56,6 +69,13 @@ export interface Appablage {
     richteEin(appId: string): Promise<void>;
     // Die Ordner der Apps unter benachrichtigungen, ohne letzte
     benachrichtigungsordner(appId: string): Promise<string[]>;
+    // zonen.<zone>: true, solange das Handy in der Zone ist; fehlt der Datenpunkt, entsteht er mit name
+    schreibeZone(appId: string, zone: string, name: string, drin: boolean, ts: number): Promise<void>;
+    // Die Zonen, für die es bei der App einen Datenpunkt gibt, ohne letzte, aktiv und grund
+    zonenpunkte(appId: string): Promise<string[]>;
+    entferneZone(appId: string, zone: string): Promise<void>;
+    // Neuer Name für zonen.<zone>, falls es den Datenpunkt gibt
+    benenneZone(appId: string, zone: string, name: string): Promise<void>;
     // Legt den Ordner samt Datenpunkten an oder benennt ihn um
     legeBenachrichtigungsordner(appId: string, ordner: string, name: string): Promise<void>;
     entferneBenachrichtigungsordner(appId: string, ordner: string): Promise<void>;
@@ -83,7 +103,12 @@ const KANAELE: Record<string, ioBroker.StringOrTranslated> = {
     akku: { de: 'Akku', en: 'Battery' },
     anruf: { de: 'Anruf', en: 'Call' },
     hinweis: { de: 'Hinweis', en: 'Notice' },
+    zonen: { de: 'Zonen', en: 'Zones' },
+    standort: { de: 'Standort', en: 'Location' },
 };
+
+// Feste Datenpunkte unter zonen; daneben je Zone einer mit ihrer ID
+export const ZONENFESTE = ['letzte', 'aktiv', 'grund'];
 
 const DATENPUNKTE = {
     online: {
@@ -113,6 +138,36 @@ const DATENPUNKTE = {
     'anruf.name': text('Name', 'Name'),
     'hinweis.senden': { ...text('Hinweis senden', 'Send notice'), write: true },
     'hinweis.status': text('Hinweisstatus', 'Notice state'),
+    'zonen.letzte': { ...text('Letzter Zonenwechsel als JSON', 'Latest zone change as JSON'), role: 'json' },
+    'zonen.aktiv': {
+        name: { de: 'Erkennt Zonen', en: 'Detects zones' },
+        type: 'boolean',
+        role: 'indicator',
+        ...nurLesen,
+    },
+    'zonen.grund': text('Warum keine Zonen erkannt werden', 'Why zones are not detected'),
+    'standort.breite': {
+        name: { de: 'Breite', en: 'Latitude' },
+        type: 'number',
+        role: 'value.gps.latitude',
+        unit: '°',
+        ...nurLesen,
+    },
+    'standort.laenge': {
+        name: { de: 'Länge', en: 'Longitude' },
+        type: 'number',
+        role: 'value.gps.longitude',
+        unit: '°',
+        ...nurLesen,
+    },
+    'standort.genauigkeit': {
+        name: { de: 'Genauigkeit', en: 'Accuracy' },
+        type: 'number',
+        role: 'value.gps.accuracy',
+        unit: 'm',
+        ...nurLesen,
+    },
+    'standort.json': { ...text('Standort als JSON', 'Location as JSON'), role: 'json' },
 } satisfies Record<string, ioBroker.StateCommon>;
 
 export type Datenpunktname = keyof typeof DATENPUNKTE;
@@ -171,15 +226,32 @@ function alsHinweisstand(n: Record<string, unknown> | undefined): Hinweisstand {
 
 const istText = (w: unknown): w is string => typeof w === 'string';
 const istJaNein = (w: unknown): w is boolean => typeof w === 'boolean';
+const istHash = (w: unknown): w is string => istText(w) && /^[0-9a-f]{64}$/.test(w);
 
-// Andere Adapter und Skripte können Objekte ändern; ein beschädigtes gilt deshalb als unbekannte App.
+// Andere Adapter und Skripte können Objekte ändern. Fehlt das Objekt, ist die App entfernt. Ist es da, aber nicht
+// lesbar, ist es nur beschädigt: Anmelden kann sich die App dann nicht, ihre Kopplung hebt das aber nicht auf.
+export function appstandAus(objekt: { type?: string; native?: unknown } | null | undefined): Appstand {
+    if (!objekt) {
+        return { art: 'fehlt' };
+    }
+    const n =
+        typeof objekt.native === 'object' && objekt.native !== null
+            ? (objekt.native as Record<string, any>)
+            : undefined;
+    const daten = objekt.type === 'device' && n ? alsAppDaten(n) : undefined;
+    if (daten) {
+        return { art: 'da', daten };
+    }
+    const hash: unknown = n?.zugangHash;
+    return istHash(hash) ? { art: 'beschaedigt', zugangHash: hash } : { art: 'beschaedigt' };
+}
+
 function alsAppDaten(n: Record<string, any>): AppDaten | undefined {
     const h = n.handydaten as Record<string, unknown> | undefined;
     const g = n.geraet as Record<string, unknown> | undefined;
     const gueltig =
         istText(n.name) &&
-        istText(n.zugangHash) &&
-        /^[0-9a-f]{64}$/.test(n.zugangHash) &&
+        istHash(n.zugangHash) &&
         istText(n.profil) &&
         typeof n.gekoppeltAm === 'number' &&
         istJaNein(h?.akku) &&
@@ -187,19 +259,34 @@ function alsAppDaten(n: Record<string, any>): AppDaten | undefined {
         istJaNein(h?.benachrichtigung) &&
         istText(g?.android) &&
         istText(g?.appVersion) &&
-        (n.fern === undefined || istJaNein(n.fern));
-    // Weitere Felder in handydaten gingen sonst an die App, deren Schema keine erlaubt.
+        (n.fern === undefined || istJaNein(n.fern)) &&
+        (h.zonen === undefined || istJaNein(h.zonen)) &&
+        (h.standort === undefined || istJaNein(h.standort));
+    // Weitere Felder in handydaten gingen sonst an die App, deren Schema keine erlaubt. Eine kaputte Zonenwahl gilt als
+    // leer, nicht als kaputte App: Die Wahl betrifft nur Zonen.
+    const wahl: unknown = n.zonenwahl;
     return gueltig
-        ? ({ ...n, handydaten: { akku: h.akku, anruf: h.anruf, benachrichtigung: h.benachrichtigung } } as AppDaten)
+        ? ({
+              ...n,
+              handydaten: {
+                  akku: h.akku,
+                  anruf: h.anruf,
+                  benachrichtigung: h.benachrichtigung,
+                  zonen: h.zonen === true,
+                  standort: h.standort === true,
+              },
+              zonenwahl: Array.isArray(wahl) ? wahl.filter(istText) : [],
+          } as AppDaten)
         : undefined;
 }
 
 // Karten, Profile und Etagen liegen als Objekte <ordner>.<id> vom Typ config, native ist der Eintrag.
-export type Ordner = 'karten' | 'profile' | 'etagen';
+export type Ordner = 'karten' | 'profile' | 'etagen' | 'zonen';
 const ORDNERNAMEN: Record<Ordner, ioBroker.StringOrTranslated> = {
     karten: { de: 'Karten für die Apps', en: 'Cards for the apps' },
     profile: { de: 'Profile für die Apps', en: 'Profiles for the apps' },
     etagen: { de: 'Etagen für die Apps', en: 'Floors for the apps' },
+    zonen: { de: 'Zonen für die Apps', en: 'Zones for the apps' },
 };
 
 // Eigene Schnittstelle, damit Seiten und Umstellung ohne ioBroker testbar sind.
@@ -215,19 +302,31 @@ export interface Eintragsablage {
 // nicht neu.
 export class IoBrokerAblage implements Appablage, Umstellungsablage {
     private readonly angelegt = new Set<string>();
+    private readonly zonennamen = new Map<string, string>();
+    // Apps, deren Objekt beim letzten Lesen beschädigt war: Gewarnt wird einmal, nicht bei jedem Versuch der App.
+    private readonly beschaedigt = new Set<string>();
 
     public constructor(private readonly adapter: ioBroker.Adapter) {}
 
     public async lies(appId: string): Promise<AppDaten | undefined> {
-        const objekt = await this.adapter.getObjectAsync(`apps.${appId}`);
-        if (objekt?.type !== 'device') {
-            return undefined;
+        const stand = await this.stand(appId);
+        return stand.art === 'da' ? stand.daten : undefined;
+    }
+
+    public async stand(appId: string): Promise<Appstand> {
+        const stand = appstandAus(await this.adapter.getObjectAsync(`apps.${appId}`));
+        if (stand.art === 'beschaedigt') {
+            if (!this.beschaedigt.has(appId)) {
+                this.beschaedigt.add(appId);
+                this.adapter.log.warn(
+                    `Objekt der App ${appId} ist beschädigt: Sie kann sich nicht anmelden, bleibt aber gekoppelt und ` +
+                        'versucht es weiter. Objekt reparieren oder, um sie zu entkoppeln, löschen.',
+                );
+            }
+        } else if (this.beschaedigt.delete(appId) && stand.art === 'da') {
+            this.adapter.log.info(`Objekt der App ${appId} ist wieder lesbar`);
         }
-        const daten = alsAppDaten(objekt.native);
-        if (!daten) {
-            this.adapter.log.warn(`Objekt der App ${appId} ist beschädigt, die App gilt als unbekannt`);
-        }
-        return daten;
+        return stand;
     }
 
     public async alle(): Promise<string[]> {
@@ -308,6 +407,54 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
         }
     }
 
+    // Name je Zone; geschrieben nur, wenn er sich geändert hat
+    public async schreibeZone(appId: string, zone: string, name: string, drin: boolean, ts: number): Promise<void> {
+        const id = `apps.${appId}.zonen.${zone}`;
+        if (!this.angelegt.has(id) || this.zonennamen.get(id) !== name) {
+            await this.sichereKanal(appId, 'zonen');
+            const common: ioBroker.StateCommon = { name, type: 'boolean', role: 'indicator', ...nurLesen };
+            // Einstellungen anderer Adapter, etwa für History unter common.custom, bleiben erhalten
+            const alt = await this.adapter.getObjectAsync(id);
+            if (alt?.type !== 'state') {
+                await this.adapter.setObjectAsync(id, { type: 'state', common, native: {} });
+            } else if (alt.common?.name !== name) {
+                await this.adapter.setObjectAsync(id, { ...alt, common: { ...alt.common, ...common } });
+            }
+            this.angelegt.add(id);
+            this.zonennamen.set(id, name);
+        }
+        await this.adapter.setStateAsync(id, { val: drin, ack: true, ts });
+    }
+
+    public async zonenpunkte(appId: string): Promise<string[]> {
+        const praefix = `${this.adapter.namespace}.apps.${appId}.zonen.`;
+        const ansicht = await this.adapter.getObjectViewAsync('system', 'state', {
+            startkey: praefix,
+            endkey: `${praefix}香`,
+        });
+        return ansicht.rows
+            .map(r => r.id.slice(praefix.length))
+            .filter(zone => zone.length > 0 && !zone.includes('.') && !ZONENFESTE.includes(zone));
+    }
+
+    public async entferneZone(appId: string, zone: string): Promise<void> {
+        const id = `apps.${appId}.zonen.${zone}`;
+        await this.adapter.delObjectAsync(id);
+        this.angelegt.delete(id);
+        this.zonennamen.delete(id);
+    }
+
+    public async benenneZone(appId: string, zone: string, name: string): Promise<void> {
+        const id = `apps.${appId}.zonen.${zone}`;
+        const alt = await this.adapter.getObjectAsync(id);
+        if (alt?.type === 'state' && alt.common.name !== name) {
+            await this.adapter.setObjectAsync(id, { ...alt, common: { ...alt.common, name } });
+        }
+        if (alt?.type === 'state') {
+            this.zonennamen.set(id, name);
+        }
+    }
+
     public async hinweise(appId: string): Promise<Hinweisstand> {
         return alsHinweisstand((await this.adapter.getObjectAsync(`apps.${appId}.hinweis`))?.native);
     }
@@ -322,8 +469,14 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
         });
     }
 
+    // Das ganze Objekt neu, jedes Feld aus daten ersetzt das alte ganz: extendObject führte Listen wie zonenwahl
+    // stellenweise zusammen und behielte Schlüssel, die es nicht mehr gibt.
     public async aendere(appId: string, daten: Partial<AppDaten>): Promise<void> {
-        await this.adapter.extendObjectAsync(`apps.${appId}`, { native: daten });
+        const objekt = await this.adapter.getObjectAsync(`apps.${appId}`);
+        if (objekt?.type !== 'device') {
+            return;
+        }
+        await this.adapter.setObjectAsync(`apps.${appId}`, { ...objekt, native: { ...objekt.native, ...daten } });
         if (daten.profil !== undefined) {
             await this.schreibe(appId, { profil: daten.profil });
         }
@@ -333,6 +486,9 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
         await this.adapter.delObjectAsync(`apps.${appId}.hinweis`, { recursive: true });
         await this.adapter.delObjectAsync(`apps.${appId}`);
         [...this.angelegt].filter(id => id.startsWith(`apps.${appId}.`)).forEach(id => this.angelegt.delete(id));
+        [...this.zonennamen.keys()]
+            .filter(id => id.startsWith(`apps.${appId}.`))
+            .forEach(id => this.zonennamen.delete(id));
     }
 
     public async leereEinstellungen(): Promise<void> {
@@ -405,13 +561,22 @@ export class IoBrokerAblage implements Appablage, Umstellungsablage {
         }
         const kanal = name.includes('.') ? name.slice(0, name.indexOf('.')) : undefined;
         if (kanal) {
-            await this.adapter.setObjectNotExistsAsync(`apps.${appId}.${kanal}`, {
-                type: 'channel',
-                common: { name: KANAELE[kanal] },
-                native: {},
-            });
+            await this.sichereKanal(appId, kanal);
         }
         await this.adapter.setObjectNotExistsAsync(id, { type: 'state', common: DATENPUNKTE[name], native: {} });
+        this.angelegt.add(id);
+    }
+
+    private async sichereKanal(appId: string, kanal: string): Promise<void> {
+        const id = `apps.${appId}.${kanal}`;
+        if (this.angelegt.has(id)) {
+            return;
+        }
+        await this.adapter.setObjectNotExistsAsync(id, {
+            type: 'channel',
+            common: { name: KANAELE[kanal] },
+            native: {},
+        });
         this.angelegt.add(id);
     }
 }

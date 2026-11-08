@@ -26,7 +26,8 @@ export interface Koppeln {
 
 export const ANMELDENACHRICHTEN: readonly string[] = ['hallo', 'koppeln'];
 
-export type Zugangspruefung = 'ok' | 'unbekannt' | 'falsch';
+// beschaedigt: Objekt der App da, aber nicht lesbar; der Zugang passt oder lässt sich nicht prüfen
+export type Zugangspruefung = 'ok' | 'unbekannt' | 'falsch' | 'beschaedigt';
 
 export interface Anmeldeziel {
     pruefeZugang(appId: string, zugang: string): Promise<Zugangspruefung>;
@@ -91,6 +92,14 @@ export class Anmeldung {
     private async hallo(v: Verbindung, hallo: Hallo): Promise<void> {
         const ergebnis = await this.o.ziel.pruefeZugang(hallo.app, hallo.zugang);
         if (!v.offen) {
+            return;
+        }
+        // Nicht 4001 und kein Fehlversuch: Die App behält ihre Kopplung und versucht es nach ihrem Takt wieder. Gewarnt
+        // hat die Ablage schon, einmal je App.
+        if (ergebnis === 'beschaedigt') {
+            v.sendeFehler('intern');
+            v.schliesse(SCHLIESSCODE.intern, 'Objekt beschädigt');
+            this.o.log.debug(`Anmeldung von ${v.herkunft.adresse} abgewiesen: Objekt der App ${hallo.app} beschädigt`);
             return;
         }
         if (ergebnis !== 'ok') {

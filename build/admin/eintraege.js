@@ -50,19 +50,31 @@ class Eintraege {
     this.jetzt = (_a = o.jetzt) != null ? _a : Date.now;
   }
   jetzt;
-  // Ohne id ein neuer Eintrag
-  async speichere(katalog, id, roh) {
+  /**
+   * Ohne id ein neuer Eintrag, mit wunsch unter dieser ID, sonst unter einer neuen aus Buchstabe und Zeit. Eine
+   * gewünschte ID muss frei sein; überschreiben geht nur über id.
+   */
+  async speichere(katalog, id, roh, wunsch) {
     const eintrag = this.art.pruefe(roh);
     if (Array.isArray(eintrag)) {
       return { fehler: "ungueltig", einzelheiten: eintrag };
     }
     let ziel;
     if (id === void 0) {
+      if (wunsch !== void 0 && !this.istId(wunsch)) {
+        return { fehler: "ungueltig", einzelheiten: ["id"] };
+      }
       if (this.art.hoechstens !== void 0 && this.art.anzahl(katalog) >= this.art.hoechstens) {
         return { fehler: "zuViele" };
       }
-      ziel = await this.neueId(katalog);
-    } else if ((0, import_rechte.istKennung)(id) && await this.gibt(id)) {
+      if (wunsch === void 0) {
+        ziel = await this.neueId(katalog);
+      } else if (this.art.imKatalog(katalog, wunsch) || await this.gibt(wunsch)) {
+        return { fehler: "vergeben" };
+      } else {
+        ziel = wunsch;
+      }
+    } else if (this.istId(id) && await this.gibt(id)) {
       ziel = id;
     } else {
       return { fehler: "weg" };
@@ -79,7 +91,7 @@ class Eintraege {
   }
   async loesche(katalog, id) {
     var _a, _b;
-    if (!(0, import_rechte.istKennung)(id) || !await this.gibt(id)) {
+    if (!this.istId(id) || !await this.gibt(id)) {
       return { fehler: "weg" };
     }
     const name = (_b = (_a = this.art.imKatalog(katalog, id)) == null ? void 0 : _a.name) != null ? _b : id;
@@ -87,6 +99,10 @@ class Eintraege {
     katalog.geaendert(this.objektId(id), null);
     this.o.log.info(`${this.art.was} \u201E${name}\u201C (${id}) gel\xF6scht`);
     return { id };
+  }
+  istId(id) {
+    var _a;
+    return ((_a = this.art.istId) != null ? _a : import_rechte.istKennung)(id);
   }
   async gibt(id) {
     return await this.o.ablage.liesEintrag(this.art.ordner, id) !== void 0;

@@ -369,7 +369,10 @@ describe('Gerätemanager', function () {
                 akku: true,
                 anruf: false,
                 benachrichtigung: false,
+                zonen: false,
+                standort: false,
             });
+            // Protokoll 3 kennt Zonen und Standort nicht
             expect((await g.naechste()).handydaten).to.deep.equal({
                 akku: true,
                 anruf: false,
@@ -377,6 +380,100 @@ describe('Gerätemanager', function () {
             });
             const texte = Object.values(dialog.formulare[0].schema.items).map(i => de(i.text as ioBroker.Translated));
             expect(texte.join(' ')).to.contain('History-Adapter');
+            expect(texte.join(' ')).to.contain('Bewegungsprofil');
+            g.schliesse();
+        });
+
+        it('Handydaten ohne Zonen: der Hinweis sagt, wo sie entstehen', async () => {
+            const { g, appId } = await gekoppelt();
+            const dialog = new Dialog([undefined]);
+            await u.verwaltung.handydaten(appId, dialog);
+            const items = dialog.formulare[0].schema.items;
+            expect(Object.keys(items)).to.deep.equal([
+                'hinweis',
+                'akku',
+                'anruf',
+                'benachrichtigung',
+                'zonen',
+                'keineZonen',
+                'standort',
+                'persoenlich',
+            ]);
+            expect(items.keineZonen).to.deep.include({ hidden: '!data.zonen' });
+            expect(de(items.keineZonen.text)).to.contain('Reiter „Zonen“');
+            expect(dialog.formulare[0].optionen?.data).to.include({ zonen: false, standort: false });
+            g.schliesse();
+        });
+
+        it('Handydaten mit Zonen: Wahl je Zone, entzogene verschwinden, Ausschalten behält die Wahl und sagt es', async () => {
+            const { g, appId } = await gekoppelt();
+            u.quelle
+                .zone('zuhause', { name: 'Zuhause', breite: 50.1, laenge: 6.9, radius: 300 })
+                .zone('arbeit', { name: 'Arbeit', breite: 50.2, laenge: 7, radius: 200 });
+            const aus = { akku: false, anruf: false, benachrichtigung: false };
+            const ein = new Dialog([{ ...aus, zonen: true, zone_zuhause: true, zone_arbeit: true, standort: true }]);
+            await u.verwaltung.handydaten(appId, ein);
+            const items = ein.formulare[0].schema.items;
+            expect(Object.keys(items).filter(k => k.startsWith('zone'))).to.deep.equal([
+                'zonen',
+                'zone_arbeit',
+                'zone_zuhause',
+            ]);
+            expect(items.zone_arbeit).to.deep.include({ type: 'checkbox', label: 'Arbeit', hidden: '!data.zonen' });
+            expect(items, 'kein Stand, solange die App nichts gemeldet hat').not.to.have.property('zonenstand');
+            expect(u.ablage.apps.get(appId)).to.deep.include({
+                handydaten: { ...aus, zonen: true, standort: true },
+                zonenwahl: ['arbeit', 'zuhause'],
+            });
+
+            // Die App hat gemeldet; Arbeit wird entzogen
+            await u.ablage.schreibeZone(appId, 'arbeit', 'Arbeit', true, 1);
+            await u.ablage.schreibeZone(appId, 'zuhause', 'Zuhause', false, 1);
+            await u.ablage.schreibe(appId, { 'zonen.aktiv': true, 'zonen.grund': '' });
+            const weniger = new Dialog([
+                { ...aus, zonen: true, zone_zuhause: true, zone_arbeit: false, standort: true },
+            ]);
+            await u.verwaltung.handydaten(appId, weniger);
+            expect(de(weniger.formulare[0].schema.items.zonenstand.text)).to.equal('Zonen: erkennt Zonen');
+            expect(weniger.formulare[0].optionen?.data).to.include({ zone_arbeit: true, zone_zuhause: true });
+            expect(u.ablage.apps.get(appId)?.zonenwahl).to.deep.equal(['zuhause']);
+            expect([...u.ablage.zonen_.get(appId)!.keys()]).to.deep.equal(['zuhause']);
+
+            // Ausschalten: Wahl und Datenpunkt bleiben, zonen.aktiv und zonen.grund sagen es
+            const ab = new Dialog([{ ...aus, zonen: false, zone_zuhause: true, zone_arbeit: false, standort: false }]);
+            await u.verwaltung.handydaten(appId, ab);
+            expect(u.ablage.apps.get(appId)).to.deep.include({
+                handydaten: { ...aus, zonen: false, standort: false },
+                zonenwahl: ['zuhause'],
+            });
+            expect([...u.ablage.zonen_.get(appId)!.keys()]).to.deep.equal(['zuhause']);
+            expect(u.ablage.werte_.get(appId)).to.include({
+                'zonen.aktiv': false,
+                'zonen.grund': 'Im Admin ausgeschaltet',
+            });
+            const danach = new Dialog([undefined]);
+            await u.verwaltung.handydaten(appId, danach);
+            expect(de(danach.formulare[0].schema.items.zonenstand.text)).to.equal(
+                'Zonen gestört: Im Admin ausgeschaltet',
+            );
+            g.schliesse();
+        });
+
+        it('Handydaten: Eine Zone, die während des Dialogs gelöscht wurde, kommt nicht zurück in die Wahl', async () => {
+            const { g, appId } = await gekoppelt();
+            u.quelle
+                .zone('zuhause', { name: 'Zuhause', breite: 1, laenge: 1, radius: 300 })
+                .zone('arbeit', { name: 'Arbeit', breite: 1.01, laenge: 1, radius: 200 });
+            const aus = { akku: false, anruf: false, benachrichtigung: false };
+            const dialog = new Dialog([
+                () => {
+                    // In einem anderen Tab gelöscht, während das Formular offen ist
+                    u.quelle.zone('arbeit', null);
+                    return { ...aus, zonen: true, zone_zuhause: true, zone_arbeit: true, standort: false };
+                },
+            ]);
+            await u.verwaltung.handydaten(appId, dialog);
+            expect(u.ablage.apps.get(appId)?.zonenwahl).to.deep.equal(['zuhause']);
             g.schliesse();
         });
 

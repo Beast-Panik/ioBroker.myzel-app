@@ -1,0 +1,171 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+        />
+        <title>Zonen</title>
+        <link
+            rel="stylesheet"
+            href="seite.css"
+        />
+        <!-- Verbindung zu ioBroker, wie sie der Admin selbst ausliefert -->
+        <script src="../../lib/js/socket.io.js"></script>
+        <script
+            type="module"
+            src="zonen.js"
+        ></script>
+    </head>
+    <body>
+        <header class="kopf">
+            <p
+                class="hinweis"
+                id="hinweis"
+            ></p>
+            <button
+                type="button"
+                class="knopf haupt"
+                id="neu"
+                disabled
+            >
+                <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                >
+                    <path d="M12 5v14M5 12h14" />
+                </svg>
+                <span id="neuText"></span>
+            </button>
+        </header>
+        <p
+            class="meldung"
+            id="meldung"
+            role="status"
+        ></p>
+        <main id="liste"></main>
+
+        <dialog id="dialog">
+            <form
+                method="dialog"
+                id="formular"
+                novalidate
+            >
+                <h2 id="titel"></h2>
+                <p
+                    class="meldung"
+                    id="fehler"
+                    role="alert"
+                ></p>
+                <div class="zeile">
+                    <label class="feld">
+                        <span id="nameLabel"></span>
+                        <input
+                            id="name"
+                            autocomplete="off"
+                            required
+                        />
+                    </label>
+                    <label class="feld kurzfeld idfeld">
+                        <span id="kennungLabel"></span>
+                        <input
+                            id="kennung"
+                            autocomplete="off"
+                            spellcheck="false"
+                            required
+                        />
+                    </label>
+                </div>
+                <p
+                    class="erklaerung"
+                    id="idHinweis"
+                ></p>
+                <div class="zeile mittelzeile">
+                    <label class="feld">
+                        <span id="mitteLabel"></span>
+                        <input
+                            id="mitte"
+                            autocomplete="off"
+                            inputmode="decimal"
+                            spellcheck="false"
+                            placeholder="50.94130, 6.95830"
+                        />
+                    </label>
+                    <button
+                        type="button"
+                        class="knopf"
+                        id="zuhause"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path d="M4 20V10l8-6 8 6v10M4 20h16M10 20v-5h4v5" />
+                        </svg>
+                        <span id="zuhauseText"></span>
+                    </button>
+                </div>
+                <div
+                    class="vorschlaege"
+                    id="vorschlaege"
+                    hidden
+                ></div>
+                <p
+                    class="erklaerung"
+                    id="mitteHinweis"
+                ></p>
+                <div class="zeile">
+                    <label class="feld kurzfeld radiusfeld">
+                        <span id="radiusLabel"></span>
+                        <input
+                            id="radius"
+                            type="number"
+                            step="50"
+                        />
+                    </label>
+                </div>
+                <p
+                    class="erklaerung"
+                    id="radiusHinweis"
+                ></p>
+                <footer class="fuss">
+                    <button
+                        type="button"
+                        class="knopf gefahr"
+                        id="loeschen"
+                    ></button>
+                    <span class="platz"></span>
+                    <button
+                        type="button"
+                        class="knopf"
+                        id="abbrechen"
+                    ></button>
+                    <button
+                        type="submit"
+                        class="knopf haupt"
+                        id="speichern"
+                    ></button>
+                </footer>
+                <footer
+                    class="fuss frage"
+                    id="loeschfrage"
+                    hidden
+                >
+                    <span id="loeschfrageText"></span>
+                    <span class="platz"></span>
+                    <button
+                        type="button"
+                        class="knopf"
+                        id="nichtLoeschen"
+                    ></button>
+                    <button
+                        type="button"
+                        class="knopf gefahr voll"
+                        id="wirklichLoeschen"
+                    ></button>
+                </footer>
+            </form>
+        </dialog>
+    </body>
+</html>

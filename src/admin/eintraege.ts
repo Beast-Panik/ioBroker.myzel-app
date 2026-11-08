@@ -3,10 +3,10 @@ import type { Eintragsablage, Ordner } from '../app/objekte';
 import { istKennung, text } from '../app/rechte';
 import type { Protokoll } from '../basis/grenzen';
 
-// Was die Seiten zeigen und übersetzen: nicht bereit, zu viele, weg, ungültig (mit Einzelheiten), gescheitert (mit
-// Meldung)
+// Was die Seiten zeigen und übersetzen: nicht bereit, zu viele, weg, ungültig (mit Einzelheiten), ID schon vergeben,
+// gescheitert (mit Meldung)
 export interface Ablehnung {
-    fehler: 'nichtBereit' | 'zuViele' | 'weg' | 'ungueltig' | 'gescheitert';
+    fehler: 'nichtBereit' | 'zuViele' | 'weg' | 'ungueltig' | 'vergeben' | 'gescheitert';
     einzelheiten?: string[];
 }
 
@@ -45,6 +45,8 @@ export interface Eintragsart<T extends { name: string }> {
     imKatalog(katalog: Katalog, id: string): T | undefined;
     anzahl(katalog: Katalog): number;
     hoechstens?: number;
+    // Gültige IDs, wenn sie nicht istKennung folgen, etwa bei Zonen
+    istId?: (id: unknown) => id is string;
 }
 
 /**
@@ -67,19 +69,36 @@ export class Eintraege<T extends { name: string }> {
         this.jetzt = o.jetzt ?? Date.now;
     }
 
-    // Ohne id ein neuer Eintrag
-    public async speichere(katalog: Katalog, id: unknown, roh: unknown): Promise<{ id: string } | Ablehnung> {
+    /**
+     * Ohne id ein neuer Eintrag, mit wunsch unter dieser ID, sonst unter einer neuen aus Buchstabe und Zeit. Eine
+     * gewünschte ID muss frei sein; überschreiben geht nur über id.
+     */
+    public async speichere(
+        katalog: Katalog,
+        id: unknown,
+        roh: unknown,
+        wunsch?: unknown,
+    ): Promise<{ id: string } | Ablehnung> {
         const eintrag = this.art.pruefe(roh);
         if (Array.isArray(eintrag)) {
             return { fehler: 'ungueltig', einzelheiten: eintrag };
         }
         let ziel: string;
         if (id === undefined) {
+            if (wunsch !== undefined && !this.istId(wunsch)) {
+                return { fehler: 'ungueltig', einzelheiten: ['id'] };
+            }
             if (this.art.hoechstens !== undefined && this.art.anzahl(katalog) >= this.art.hoechstens) {
                 return { fehler: 'zuViele' };
             }
-            ziel = await this.neueId(katalog);
-        } else if (istKennung(id) && (await this.gibt(id))) {
+            if (wunsch === undefined) {
+                ziel = await this.neueId(katalog);
+            } else if (this.art.imKatalog(katalog, wunsch) || (await this.gibt(wunsch))) {
+                return { fehler: 'vergeben' };
+            } else {
+                ziel = wunsch;
+            }
+        } else if (this.istId(id) && (await this.gibt(id))) {
             ziel = id;
         } else {
             return { fehler: 'weg' };
@@ -96,7 +115,7 @@ export class Eintraege<T extends { name: string }> {
     }
 
     public async loesche(katalog: Katalog, id: unknown): Promise<{ id: string } | Ablehnung> {
-        if (!istKennung(id) || !(await this.gibt(id))) {
+        if (!this.istId(id) || !(await this.gibt(id))) {
             return { fehler: 'weg' };
         }
         const name = this.art.imKatalog(katalog, id)?.name ?? id;
@@ -104,6 +123,10 @@ export class Eintraege<T extends { name: string }> {
         katalog.geaendert(this.objektId(id), null);
         this.o.log.info(`${this.art.was} „${name}“ (${id}) gelöscht`);
         return { id };
+    }
+
+    private istId(id: unknown): id is string {
+        return (this.art.istId ?? istKennung)(id);
     }
 
     private async gibt(id: string): Promise<boolean> {

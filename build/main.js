@@ -28,6 +28,7 @@ var import_fernseite = require("./admin/fernseite");
 var import_kartenseite = require("./admin/kartenseite");
 var import_profilseite = require("./admin/profilseite");
 var import_raumseite = require("./admin/raumseite");
+var import_zonenseite = require("./admin/zonenseite");
 var import_fernzugang = require("./app/fernzugang");
 var import_katalog = require("./app/katalog");
 var import_objekte = require("./app/objekte");
@@ -83,7 +84,21 @@ class MyzelApp extends utils.Adapter {
       [import_kartenseite.KARTENBEFEHLE, new import_kartenseite.Kartenseite(seite)],
       [import_profilseite.PROFILBEFEHLE, new import_profilseite.Profilseite(seite)],
       [import_raumseite.RAUMBEFEHLE, new import_raumseite.Raumseite(seite)],
-      [import_fernseite.FERNBEFEHLE, new import_fernseite.Fernseite({ namespace: this.namespace, betrieb: () => this.fernbetrieb() })]
+      [import_fernseite.FERNBEFEHLE, new import_fernseite.Fernseite({ namespace: this.namespace, betrieb: () => this.fernbetrieb() })],
+      [
+        import_zonenseite.ZONENBEFEHLE,
+        new import_zonenseite.Zonenseite({
+          ...seite,
+          apps: () => {
+            var _a;
+            return (_a = this.betrieb) == null ? void 0 : _a.ablage;
+          },
+          vorschlaege: () => {
+            var _a, _b;
+            return (_b = (_a = this.betrieb) == null ? void 0 : _a.dienst.mittelpunktvorschlaege()) != null ? _b : [];
+          }
+        })
+      ]
     ];
     try {
       await this.starte();
@@ -160,7 +175,7 @@ class MyzelApp extends utils.Adapter {
       this.log.warn((0, import_geraete.adminOffen)(offen).de);
     }
   }
-  // Die Seiten in den Reitern Karten, Räume und Profile (admin/jsonConfig.json)
+  // Die Seiten in den Reitern Karten, Räume, Profile, Fernzugang und Zonen (admin/jsonConfig.json)
   async beantworte(obj) {
     var _a;
     const seite = (_a = this.seiten.find(([befehle]) => befehle.includes(obj == null ? void 0 : obj.command))) == null ? void 0 : _a[1];

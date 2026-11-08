@@ -26,6 +26,9 @@ Befehle, je Zeile (Text mit Leerzeichen in "..."):
   akku <0-100> [laedt]          anruf <frei|klingelt|gespraech> [eingehend|ausgehend] [nummer] [name]
   benachrichtigung <app> <paket> [titel] [text]
   auswahl [<paket>=<app> ...]   ab Version 4: Apps, deren Benachrichtigungen hinausgehen
+  zone <id> <rein|raus>         ab Version 7: Zone betreten oder verlassen
+  zonenstand an [<id> ...]      zonenstand aus <grund>        ab Version 7
+  standort <breite> <laenge> <genauigkeit>                    ab Version 7
   angezeigt <hinweis-id>        roh <JSON, ungeprüft>          ende`;
 
 const QR_SCHEMA = 'myzelapp:';
@@ -213,6 +216,14 @@ function nachricht(teile: string[], n: () => number): object | string {
                         : { paket: eintrag.slice(0, gleich), app: eintrag.slice(gleich + 1) };
                 }),
             };
+        case 'zone':
+            return { t: 'zone', id: a[0], drin: a[1] === 'rein', zeit };
+        case 'zonenstand':
+            return a[0] === 'an'
+                ? { t: 'zonenstand', aktiv: true, drin: a.slice(1), zeit }
+                : { t: 'zonenstand', aktiv: false, ...(a[1] && { grund: a[1] }), drin: [], zeit };
+        case 'standort':
+            return { t: 'standort', breite: Number(a[0]), laenge: Number(a[1]), genauigkeit: Number(a[2]), zeit };
         case 'angezeigt':
             return { t: 'angezeigt', id: a[0] };
         default:

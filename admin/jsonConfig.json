@@ -89,6 +89,24 @@
                 }
             }
         },
+        "_reiterZonen": {
+            "type": "panel",
+            "label": "Zones",
+            "items": {
+                "_zonenAus": {
+                    "type": "staticText",
+                    "text": "Zones page offline",
+                    "hidden": "_alive",
+                    "xs": 12
+                },
+                "_zonenseite": {
+                    "type": "iframeSendTo",
+                    "command": "zonenseite",
+                    "xs": 12,
+                    "style": { "height": "calc(100vh - 220px)", "minHeight": "420px" }
+                }
+            }
+        },
         "_reiterEinstellungen": {
             "type": "panel",
             "label": "Settings",

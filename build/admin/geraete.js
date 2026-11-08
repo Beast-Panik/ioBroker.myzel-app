@@ -27,6 +27,7 @@ var import_dm_utils = require("@iobroker/dm-utils");
 var import_rechte = require("../app/rechte");
 var import_grenzen = require("../basis/grenzen");
 var import_kopplung = require("../basis/kopplung");
+var import_zonen = require("../app/zonen");
 const T = {
   koppeln: { en: "Pair app", de: "App koppeln" },
   profilWaehlen: { en: "Choose profile", de: "Profil w\xE4hlen" },
@@ -49,13 +50,23 @@ const T = {
   akku: { en: "Battery", de: "Akku" },
   anruf: { en: "Calls", de: "Anrufe" },
   benachrichtigung: { en: "Notifications", de: "Benachrichtigungen" },
+  zonen: { en: "Zones", de: "Zonen" },
+  standort: {
+    en: "Location (latitude, longitude and accuracy, at most every 5 minutes)",
+    de: "Standort (Breite, L\xE4nge und Genauigkeit, h\xF6chstens alle 5 Minuten)"
+  },
+  keineZonen: {
+    en: "No zones yet. They are created in the Zones tab of the instance settings.",
+    de: "Noch keine Zonen. Sie entstehen im Reiter \u201EZonen\u201C der Instanzeinstellungen."
+  },
+  zonenAktiv: { en: "Zones: detecting zones", de: "Zonen: erkennt Zonen" },
   handydatenHinweis: {
     en: "Each data type must also be switched on in the app. Switched off types are rejected and not written.",
     de: "Jede Datenart muss auch in der App eingeschaltet sein. Was hier aus ist, lehnt der Adapter ab und schreibt nichts."
   },
   persoenlich: {
-    en: "Calls and notifications contain personal data: phone numbers, contact names, message texts. Every adapter and script can read them. A history adapter on these data points stores them permanently.",
-    de: "Anrufe und Benachrichtigungen enthalten pers\xF6nliche Daten: Rufnummern, Kontaktnamen, Nachrichtentexte. Jeder Adapter und jedes Skript kann sie lesen. Ein History-Adapter auf diesen Datenpunkten speichert sie dauerhaft."
+    en: "Calls, notifications, zones and location contain personal data: phone numbers, contact names, message texts, when someone is where. Every adapter and script can read them. A history adapter on these data points stores them permanently, for zones and location as a movement profile.",
+    de: "Anrufe, Benachrichtigungen, Zonen und Standort enthalten pers\xF6nliche Daten: Rufnummern, Kontaktnamen, Nachrichtentexte, wann jemand wo ist. Jeder Adapter und jedes Skript kann sie lesen. Ein History-Adapter auf diesen Datenpunkten speichert sie dauerhaft, bei Zonen und Standort als Bewegungsprofil."
   },
   laeuftNicht: {
     en: "The adapter is not running. The cause is in the log.",
@@ -188,19 +199,57 @@ class Verwaltung {
       return GERAETE;
     });
   }
+  // Variante B aus KONZEPT-ZONEN.md, Abschnitt 16.2: Zonen und Standort neben den übrigen Datenarten, darunter die
+  // Wahl der Zonen. Die Wahl bleibt beim Ausschalten, damit Einschalten sie wiederherstellt.
   handydaten(appId, ctx) {
     return this.sicherFuerApp(appId, ctx, "Handydaten", async (b, daten) => {
+      var _a, _b;
+      const zonen = b.katalog.zonen();
+      const wahl = new Set((_a = daten.zonenwahl) != null ? _a : []);
+      const feld = (id) => `zone_${id}`;
+      const zonenfelder = zonen.length === 0 ? {
+        keineZonen: {
+          type: "staticText",
+          text: T.keineZonen,
+          xs: 12,
+          newLine: true,
+          hidden: "!data.zonen"
+        }
+      } : Object.fromEntries(
+        zonen.map(([id, z]) => [
+          feld(id),
+          {
+            type: "checkbox",
+            label: z.name,
+            xs: 12,
+            newLine: true,
+            hidden: "!data.zonen",
+            // Eingerückt unter „Zonen“ wie im Entwurf (design/zonen.html, Variante B)
+            style: { paddingLeft: 28 }
+          }
+        ])
+      );
+      const stand = await this.zonenstand(b, appId);
       const antwort = await ctx.showForm(
         panel({
           hinweis: { type: "staticText", text: T.handydatenHinweis, xs: 12 },
           akku: { type: "checkbox", label: T.akku, xs: 12, newLine: true },
           anruf: { type: "checkbox", label: T.anruf, xs: 12, newLine: true },
           benachrichtigung: { type: "checkbox", label: T.benachrichtigung, xs: 12, newLine: true },
-          persoenlich: { type: "staticText", text: T.persoenlich, xs: 12, newLine: true }
+          zonen: { type: "checkbox", label: T.zonen, xs: 12, newLine: true },
+          ...zonenfelder,
+          standort: { type: "checkbox", label: T.standort, xs: 12, newLine: true },
+          persoenlich: { type: "staticText", text: T.persoenlich, xs: 12, newLine: true },
+          ...stand && { zonenstand: { type: "staticText", text: stand, xs: 12, newLine: true } }
         }),
         {
           title: mitName(daten.name, T.handydaten),
-          data: { ...daten.handydaten },
+          data: {
+            ...daten.handydaten,
+            zonen: daten.handydaten.zonen === true,
+            standort: daten.handydaten.standort === true,
+            ...Object.fromEntries(zonen.map(([id]) => [feld(id), wahl.has(id)]))
+          },
           buttons: ["cancel", "apply"]
         }
       );
@@ -208,14 +257,53 @@ class Verwaltung {
         const handydaten = {
           akku: antwort.akku === true,
           anruf: antwort.anruf === true,
-          benachrichtigung: antwort.benachrichtigung === true
+          benachrichtigung: antwort.benachrichtigung === true,
+          zonen: antwort.zonen === true,
+          standort: antwort.standort === true
         };
-        if (JSON.stringify(handydaten) !== JSON.stringify(daten.handydaten)) {
-          await b.ablage.aendere(appId, { handydaten });
+        const zonenwahl = zonen.map(([id]) => id).filter((id) => antwort[feld(id)] === true && b.katalog.gibtZone(id));
+        const vorher = {
+          ...daten.handydaten,
+          zonen: daten.handydaten.zonen === true,
+          standort: daten.handydaten.standort === true
+        };
+        const wahlNeu = JSON.stringify(zonenwahl) !== JSON.stringify((_b = daten.zonenwahl) != null ? _b : []);
+        if (JSON.stringify(handydaten) !== JSON.stringify(vorher) || wahlNeu) {
+          await b.ablage.aendere(appId, { handydaten, zonenwahl });
         }
+        await this.raeumeZonenAuf(b, appId, zonenwahl, vorher.zonen && !handydaten.zonen);
       }
       return GERAETE;
     });
+  }
+  // Datenpunkte von Zonen, die die App nicht mehr bekommt, verschwinden. Endet die Freigabe, sagen zonen.aktiv und
+  // zonen.grund es, falls es sie schon gibt.
+  async raeumeZonenAuf(b, appId, zonenwahl, ausgeschaltet) {
+    for (const zone of await b.ablage.zonenpunkte(appId)) {
+      if (!zonenwahl.includes(zone)) {
+        await b.ablage.entferneZone(appId, zone);
+      }
+    }
+    if (ausgeschaltet && await b.ablage.zustand(appId, "zonen.aktiv")) {
+      await b.ablage.schreibe(appId, {
+        "zonen.aktiv": false,
+        "zonen.grund": (0, import_zonen.grundText)("admin", b.katalog.sprache)
+      });
+    }
+  }
+  // Was die App zuletzt zu den Zonen gemeldet hat; undefined, solange sie nichts gemeldet hat
+  async zonenstand(b, appId) {
+    var _a;
+    const aktiv = await b.ablage.zustand(appId, "zonen.aktiv");
+    if (typeof (aktiv == null ? void 0 : aktiv.val) !== "boolean") {
+      return void 0;
+    }
+    if (aktiv.val) {
+      return T.zonenAktiv;
+    }
+    const grund = (_a = await b.ablage.zustand(appId, "zonen.grund")) == null ? void 0 : _a.val;
+    const text = typeof grund === "string" && grund !== "" ? grund : "-";
+    return { en: `Zones disturbed: ${text}`, de: `Zonen gest\xF6rt: ${text}` };
   }
   entferne(appId, ctx) {
     return this.sicherFuerApp(appId, ctx, "Entfernen", async (b, daten) => {

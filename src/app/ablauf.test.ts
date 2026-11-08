@@ -18,6 +18,7 @@ import { SCHLIESSCODE } from '../basis/kern';
 import { neueAdapterId, neuerZugang, sha256 } from '../basis/kodierung';
 import { erzeugeIdentitaet, fingerabdruck } from '../basis/zertifikat';
 import type { Fernablage, Ferneinstellung } from './fernzugang';
+import type { AppDaten, Handydaten } from './objekte';
 import type { Karte, Profil } from './rechte';
 import { type Server, starteServer } from './server';
 
@@ -36,6 +37,9 @@ const LAMPE: Karte = {
     raum: 'enum.rooms.wohnzimmer',
     teile: { schalten: 'zigbee.0.lampe.state', helligkeit: 'zigbee.0.lampe.helligkeit' },
 };
+// Beispielorte in Köln, keine echten Wohnorte
+const ZUHAUSE = { name: 'Zuhause', breite: 50.941303, laenge: 6.958304, radius: 300 };
+const ARBEIT = { name: 'Arbeit', breite: 50.9375, laenge: 6.9603, radius: 200 };
 const familie = (teil: Partial<Profil>): Profil => ({
     name: 'Familie',
     raeume: [{ enum: 'enum.rooms.wohnzimmer', recht: 'schreiben' }],
@@ -191,6 +195,16 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         expect(fehler).to.include({ t: 'fehler', code });
         expect((await g.geschlossen()).code).to.equal(schliesscode);
         return fehler;
+    }
+
+    // Wie ein fehlerhaftes object set: Das Objekt ist da, aber nicht lesbar.
+    function beschaedige(appId: string, objekt: { type?: string; native?: unknown }): void {
+        u.ablage.beschaedigt_.set(appId, objekt);
+        u.quelle.objekt_(`${NAMESPACE}.apps.${appId}`, objekt);
+    }
+    function heile(appId: string): void {
+        u.ablage.beschaedigt_.delete(appId);
+        u.quelle.app(appId, u.ablage.apps.get(appId));
     }
 
     beforeEach(() => {
@@ -385,12 +399,12 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
 
     it('andere Protokollversion: fehler version mit den unterstützten Versionen und 4002', async () => {
         const g = await verbinde();
-        g.sende({ t: 'hallo', v: 7, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
+        g.sende({ t: 'hallo', v: 8, app: 'abcdefgh', zugang: neuerZugang(), geraet, neu: true });
         const fehler = await erwarteFehler(g, 'version', SCHLIESSCODE.version);
-        expect(fehler.unterstuetzt).to.deep.equal([3, 4, 5, 6]);
+        expect(fehler.unterstuetzt).to.deep.equal([3, 4, 5, 6, 7]);
         const alt = await verbinde();
         alt.sende({ t: 'koppeln', v: 2, geheimnis: 'A'.repeat(22), name: 'X', geraet });
-        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4, 5, 6]);
+        expect((await erwarteFehler(alt, 'version', SCHLIESSCODE.version)).unterstuetzt).to.deep.equal([3, 4, 5, 6, 7]);
     });
 
     it('Etagen nur für Apps ab Version 5, auch leer; ältere bekommen keine', async () => {
@@ -808,18 +822,80 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
     it('wird die App während der Anmeldung entfernt, bekommt sie kein willkommen', async () => {
         const { g, appId, zugang } = await kopple();
         g.schliesse();
-        const lies = u.ablage.lies.bind(u.ablage);
+        const stand = u.ablage.stand.bind(u.ablage);
         let aufrufe = 0;
-        u.ablage.lies = async id => {
-            const daten = await lies(id);
+        u.ablage.stand = async id => {
+            const gelesen = await stand(id);
             if (++aufrufe === 2) {
                 await u.server.dienst.entferne(appId);
             }
-            return daten;
+            return gelesen;
         };
         const neu = await melde(appId, zugang);
         expect((await neu.geschlossen()).code).to.equal(SCHLIESSCODE.entfernt);
         expect((await neu.alle()).map(n => n.t)).to.deep.equal([]);
+    });
+
+    // Wie am 6. 11. 2026 nach einem fehlerhaften object set: Das Objekt ist kurz kaputt, dann wieder heil.
+    it('ein beschädigtes Objekt trennt mit 1011, die Kopplung bleibt, heil meldet sich die App wieder an', async () => {
+        const { g, appId, zugang } = await kopple();
+        const daten = u.ablage.apps.get(appId)!;
+        beschaedige(appId, {
+            type: 'device',
+            native: { ...daten, handydaten: { ...daten.handydaten, akku: 'true' } },
+        });
+        expect((await g.geschlossen()).code).to.equal(SCHLIESSCODE.intern);
+        await erwarteFehler(await melde(appId, zugang), 'intern', SCHLIESSCODE.intern);
+        heile(appId);
+        const wieder = await melde(appId, zugang);
+        expect((await wieder.naechste()).t).to.equal('willkommen');
+        wieder.schliesse();
+        const log = u.log.join('\n');
+        expect(log).to.contain(`App ${appId}: Objekt beschädigt, Verbindung beendet, die App bleibt gekoppelt`);
+        expect(log).to.not.contain(`App ${appId} entfernt`);
+    });
+
+    it('mit beschädigtem Objekt: 1011 ohne Fehlversuch, auch wenn sich der Zugang nicht prüfen lässt', async () => {
+        await starte({ fehlversuche: 2 });
+        const { g, appId, zugang } = await kopple();
+        g.schliesse();
+        beschaedige(appId, { type: 'device', native: null });
+        for (let i = 0; i < 3; i++) {
+            await erwarteFehler(await melde(appId, zugang), 'intern', SCHLIESSCODE.intern);
+        }
+        // Ohne lesbaren Hash bekommt auch ein fremder Zugang 1011: Anmelden kann er sich so wenig wie die App.
+        const fremd = await erwarteFehler(await melde(appId, neuerZugang()), 'intern', SCHLIESSCODE.intern);
+        expect(fremd).to.not.have.property('text');
+        expect(u.log.join('\n')).to.not.contain('gesperrt');
+    });
+
+    it('beschädigt, aber mit lesbarem Zugang: Ein anderer Zugang hebt die Kopplung weiter auf', async () => {
+        const { g, appId, zugang } = await kopple();
+        const daten = u.ablage.apps.get(appId)!;
+        beschaedige(appId, { type: 'channel', native: daten });
+        await erwarteFehler(await melde(appId, neuerZugang()), 'zugang', SCHLIESSCODE.zugang);
+        await erwarteFehler(await melde(appId, zugang), 'intern', SCHLIESSCODE.intern);
+        expect((await g.geschlossen()).code).to.equal(SCHLIESSCODE.intern);
+        const zweite = await kopple();
+        const anders = sha256(neuerZugang()).toString('hex');
+        beschaedige(zweite.appId, { type: 'device', native: { ...daten, profil: 7, zugangHash: anders } });
+        expect((await zweite.g.geschlossen()).code).to.equal(SCHLIESSCODE.entfernt);
+        await erwarteFehler(await melde(zweite.appId, zweite.zugang), 'zugang', SCHLIESSCODE.zugang);
+    });
+
+    it('wird das Objekt während der Anmeldung beschädigt, bekommt die App 1011 und kein willkommen', async () => {
+        const { g, appId, zugang } = await kopple();
+        g.schliesse();
+        const stand = u.ablage.stand.bind(u.ablage);
+        // Beim zweiten Lesen in angemeldet, beim dritten in der Nachprüfung vor willkommen
+        for (const beim of [2, 3]) {
+            let aufrufe = 0;
+            u.ablage.stand = id => (++aufrufe === beim ? Promise.resolve({ art: 'beschaedigt' }) : stand(id));
+            const neu = await melde(appId, zugang);
+            expect((await neu.geschlossen()).code).to.equal(SCHLIESSCODE.intern);
+            expect((await neu.alle()).map(n => n.t)).to.deep.equal(beim === 2 ? ['fehler'] : []);
+        }
+        expect(u.log.join('\n')).to.contain(`App ${appId}: Objekt während der Anmeldung beschädigt`);
     });
 
     it('ausgeschaltete Handydaten: fehler aus, nichts geschrieben', async () => {
@@ -974,6 +1050,325 @@ describe('Ablauf über TLS mit Kopplung und Anmeldung', function () {
         }
         await erwarteFehler(await melde(appId, zugang), 'zuviel', SCHLIESSCODE.zuviel);
         expect(u.log.filter(z => z.includes('meldet sich zu oft an'))).to.have.length(1);
+    });
+
+    describe('Zonen und Standort (Protokoll 7)', () => {
+        const AUS: Handydaten = { akku: false, anruf: false, benachrichtigung: false, zonen: false, standort: false };
+
+        async function aendereApp(appId: string, daten: Partial<AppDaten>): Promise<void> {
+            await u.ablage.aendere(appId, daten);
+            u.quelle.app(appId, u.ablage.apps.get(appId));
+        }
+
+        async function mitZonen(
+            zonenwahl: string[],
+            handydaten: Partial<Handydaten> = {},
+        ): Promise<{ g: Gegenstelle; appId: string; rechte: Record<string, any> }> {
+            u.quelle.zone('zuhause', ZUHAUSE).zone('arbeit', ARBEIT);
+            const { g, appId, willkommen } = await kopple('familie', 7);
+            expect(willkommen.handydaten).to.deep.equal(AUS);
+            expect(willkommen.zonen).to.deep.equal([]);
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true, ...handydaten }, zonenwahl });
+            const rechte = await g.naechste();
+            expect(rechte).to.include({ t: 'rechte' });
+            return { g, appId, rechte };
+        }
+
+        const zonenpunkte = (appId: string): string[] => [...(u.ablage.zonen_.get(appId)?.keys() ?? [])].sort();
+
+        it('willkommen und rechte tragen die freigegebenen Zonen nach Namen; Protokoll 6 bekommt nichts davon', async () => {
+            const { g, rechte } = await mitZonen(['zuhause', 'arbeit', 'gibtsnicht'], { standort: true });
+            expect(rechte.handydaten).to.deep.equal({ ...AUS, zonen: true, standort: true });
+            expect(rechte.zonen).to.deep.equal([
+                { id: 'arbeit', ...ARBEIT },
+                { id: 'zuhause', ...ZUHAUSE },
+            ]);
+            g.schliesse();
+            const { g: alt, appId, willkommen } = await kopple('familie', 6);
+            expect(willkommen.handydaten).to.deep.equal({ akku: false, anruf: false, benachrichtigung: false });
+            expect(willkommen).not.to.have.property('zonen');
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true, akku: true }, zonenwahl: ['zuhause'] });
+            const neu = await alt.naechste();
+            expect(neu.handydaten).to.deep.equal({ akku: true, anruf: false, benachrichtigung: false });
+            expect(neu).not.to.have.property('zonen');
+            // Zonenmeldungen gibt es erst ab 7
+            alt.sende({ t: 'zone', id: 'zuhause', drin: true, zeit: vorhin() });
+            expect(await alt.naechste()).to.include({ t: 'fehler', code: 'ungueltig' });
+            alt.sende({ t: 'standort', breite: 0, laenge: 0, genauigkeit: 5, zeit: vorhin() });
+            expect(await alt.naechste()).to.include({ t: 'fehler', code: 'ungueltig' });
+            alt.sende({ t: 'vorschlag', breite: 0, laenge: 0, genauigkeit: 5, zeit: vorhin() });
+            expect(await alt.naechste()).to.include({ t: 'fehler', code: 'ungueltig' });
+            expect(zonenpunkte(appId)).to.deep.equal([]);
+            alt.schliesse();
+        });
+
+        it('Zonenwechsel: erst zonen.<zone> mit Namen, dann letzte; fremde Zone abgelehnt; Standort aus', async () => {
+            const { g, appId } = await mitZonen(['zuhause']);
+            const zeit = vorhin();
+            g.sende({ t: 'zone', id: 'zuhause', drin: true, zeit });
+            await bis(() => u.ablage.geschrieben.some(e => e.startsWith(`${appId}.zonen.letzte=`)));
+            expect(u.ablage.geschrieben.filter(e => e.startsWith(`${appId}.zonen.`))).to.deep.equal([
+                `${appId}.zonen.zuhause=true@${zeit}`,
+                `${appId}.zonen.letzte=${JSON.stringify({ zone: 'zuhause', name: 'Zuhause', ereignis: 'betreten', zeit })}@${zeit}`,
+            ]);
+            expect(u.ablage.zonen_.get(appId)?.get('zuhause')).to.deep.equal({ name: 'Zuhause', drin: true, ts: zeit });
+            g.sende({ t: 'zone', id: 'arbeit', drin: true, zeit });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'abgelehnt' });
+            g.sende({ t: 'standort', breite: 50.9, laenge: 6.9, genauigkeit: 5, zeit });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'aus' });
+            expect(zonenpunkte(appId)).to.deep.equal(['zuhause']);
+            expect(u.ablage.werte_.get(appId)).not.to.have.property('standort.json');
+            g.schliesse();
+        });
+
+        it('Zonenstand: ersetzt den Stand aller Zonen der App; ohne aktiv bleiben sie, Grund in der Systemsprache', async () => {
+            const { g, appId } = await mitZonen(['zuhause', 'arbeit']);
+            const zeit = vorhin();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['arbeit'], zeit });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === true);
+            expect(u.ablage.zonen_.get(appId)?.get('arbeit')).to.include({ name: 'Arbeit', drin: true });
+            expect(u.ablage.zonen_.get(appId)?.get('zuhause')).to.include({ name: 'Zuhause', drin: false });
+            expect(u.ablage.werte_.get(appId)).to.include({ 'zonen.grund': '' });
+            g.sende({ t: 'zonenstand', aktiv: false, grund: 'hintergrund', drin: [], zeit: zeit + 1 });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === false);
+            expect(u.ablage.werte_.get(appId)).to.include({ 'zonen.grund': 'Standort im Hintergrund nicht erlaubt' });
+            g.sende({ t: 'zonenstand', aktiv: false, grund: 'aus', drin: [], zeit: zeit + 2 });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.grund'] === 'In der App ausgeschaltet');
+            expect(u.ablage.zonen_.get(appId)?.get('arbeit')).to.include({ drin: true, ts: zeit });
+            g.schliesse();
+        });
+
+        it('Standort: Breite, Länge, Genauigkeit, json zuletzt; nach zwei höchstens einer je Minute; nie im Log', async () => {
+            const { g, appId } = await mitZonen([], { zonen: false, standort: true });
+            const zeit = vorhin();
+            geheimnisse.push('50.941303', '6.958304');
+            g.sende({ t: 'standort', breite: 50.941303, laenge: 6.958304, genauigkeit: 12.5, zeit });
+            g.sende({ t: 'standort', breite: 50.941303, laenge: 6.958304, genauigkeit: 8, zeit: zeit + 1 });
+            g.sende({ t: 'standort', breite: 50.941303, laenge: 6.958304, genauigkeit: 4, zeit: zeit + 2 });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'zuviel' });
+            await bis(() => u.ablage.werte_.get(appId)?.['standort.genauigkeit'] === 8);
+            const json = JSON.stringify({ breite: 50.941303, laenge: 6.958304, genauigkeit: 8, zeit: zeit + 1 });
+            expect(u.ablage.geschrieben.filter(e => e.includes('.standort.')).slice(-4)).to.deep.equal([
+                `${appId}.standort.breite=50.941303@${zeit + 1}`,
+                `${appId}.standort.laenge=6.958304@${zeit + 1}`,
+                `${appId}.standort.genauigkeit=8@${zeit + 1}`,
+                `${appId}.standort.json=${json}@${zeit + 1}`,
+            ]);
+            g.sende({ t: 'zone', id: 'zuhause', drin: true, zeit });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'aus' });
+            g.schliesse();
+        });
+
+        it('Zonenmeldungen: nach einem Stoß von 10 kommt zuviel', async () => {
+            const { g, appId } = await mitZonen(['zuhause']);
+            const zeit = vorhin();
+            for (let i = 0; i < 11; i++) {
+                g.sende({ t: 'zone', id: 'zuhause', drin: i % 2 === 0, zeit: zeit + i });
+            }
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'zuviel' });
+            await bis(() => u.ablage.zonen_.get(appId)?.get('zuhause')?.ts === zeit + 9);
+            expect(u.ablage.geschrieben.filter(e => e.startsWith(`${appId}.zonen.zuhause=`))).to.have.length(10);
+            g.schliesse();
+        });
+
+        it('Vorschlag für einen Mittelpunkt: nur mit Zonen, einer je Minute, nur im Speicher, nie im Log', async () => {
+            const { g, appId } = await mitZonen([]);
+            const zeit = vorhin();
+            geheimnisse.push('50.941303', '6.958304');
+            g.sende({ t: 'vorschlag', breite: 50.941303, laenge: 6.958304, genauigkeit: 12, zeit });
+            await bis(() => u.server.dienst.mittelpunktvorschlaege().length === 1);
+            expect(u.server.dienst.mittelpunktvorschlaege()).to.deep.equal([
+                { appId, breite: 50.941303, laenge: 6.958304, genauigkeit: 12, zeit },
+            ]);
+            g.sende({ t: 'vorschlag', breite: 1, laenge: 1, genauigkeit: 5, zeit: zeit + 1 });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'zuviel' });
+            expect(u.server.dienst.mittelpunktvorschlaege()[0]).to.include({ breite: 50.941303 });
+            expect(u.ablage.geschrieben.filter(e => e.includes('50.94') || e.includes('vorschlag'))).to.deep.equal([]);
+            // Nach 15 Minuten ist er weg, ebenso mit der App
+            expect(u.server.dienst.mittelpunktvorschlaege(Date.now() + 15 * 60_000 + 1)).to.deep.equal([]);
+            await aendereApp(appId, { handydaten: AUS });
+            await g.naechste();
+            g.sende({ t: 'vorschlag', breite: 1, laenge: 1, genauigkeit: 5, zeit });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'aus' });
+            g.schliesse();
+            await u.server.dienst.entferne(appId);
+            expect(u.server.dienst.mittelpunktvorschlaege()).to.deep.equal([]);
+        });
+
+        it('umbenannt gilt sofort; entzogen oder gelöscht verschwindet der Datenpunkt, ausgeschaltet bleibt er', async () => {
+            const { g, appId } = await mitZonen(['zuhause', 'arbeit']);
+            const zeit = vorhin();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+            await bis(() => zonenpunkte(appId).length === 2);
+
+            // Umbenannt: Der nächste Wechsel trägt den neuen Namen schon vor der Neuberechnung
+            u.quelle.zone('zuhause', { ...ZUHAUSE, name: 'Heim' });
+            g.sende({ t: 'zone', id: 'zuhause', drin: false, zeit: zeit + 1 });
+            await bis(() => u.ablage.zonen_.get(appId)?.get('zuhause')?.ts === zeit + 1);
+            expect(u.ablage.zonen_.get(appId)?.get('zuhause')?.name).to.equal('Heim');
+            expect((await g.naechste()).zonen.map((z: { name: string }) => z.name)).to.deep.equal(['Arbeit', 'Heim']);
+
+            // Entzogen: Ein Wechsel vor der Neuberechnung legt den Datenpunkt nicht dauerhaft wieder an
+            await aendereApp(appId, { zonenwahl: ['zuhause'] });
+            g.sende({ t: 'zone', id: 'arbeit', drin: true, zeit: zeit + 2 });
+            expect((await g.naechste()).zonen.map((z: { id: string }) => z.id)).to.deep.equal(['zuhause']);
+            expect(u.ablage.geschrieben, 'Wechsel kam vor der Neuberechnung').to.include(
+                `${appId}.zonen.arbeit=true@${zeit + 2}`,
+            );
+            await bis(() => !zonenpunkte(appId).includes('arbeit'));
+
+            // Ausgeschaltet: Wahl und Datenpunkt bleiben
+            await aendereApp(appId, { handydaten: AUS });
+            expect((await g.naechste()).zonen).to.deep.equal([]);
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true } });
+            expect((await g.naechste()).zonen.map((z: { id: string }) => z.id)).to.deep.equal(['zuhause']);
+            expect(zonenpunkte(appId)).to.deep.equal(['zuhause']);
+
+            // Gelöscht
+            u.quelle.zone('zuhause', null);
+            expect((await g.naechste()).zonen).to.deep.equal([]);
+            await bis(() => zonenpunkte(appId).length === 0);
+            g.sende({ t: 'zone', id: 'zuhause', drin: true, zeit: zeit + 3 });
+            expect(await g.naechste()).to.include({ t: 'fehler', code: 'abgelehnt' });
+            expect(zonenpunkte(appId)).to.deep.equal([]);
+            g.schliesse();
+        });
+
+        // Alle Nachrichten bis einschließlich der nächsten rechte
+        async function bisRechte(g: Gegenstelle): Promise<Record<string, any>[]> {
+            const alle: Record<string, any>[] = [];
+            while (alle.at(-1)?.t !== 'rechte') {
+                alle.push(await g.naechste());
+            }
+            return alle;
+        }
+
+        it('Ausschalten im Admin gilt sofort: Stand und Standort danach schreiben nichts, zonen.aktiv bleibt aus', async () => {
+            const { g, appId } = await mitZonen(['zuhause'], { standort: true });
+            const zeit = vorhin();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === true);
+            // Bis zur Neuberechnung kommt noch etwas vom Handy, das die neue Freigabe nicht kennt
+            await aendereApp(appId, { handydaten: AUS });
+            g.sende({ t: 'zonenstand', aktiv: true, drin: [], zeit: zeit + 1 });
+            g.sende({ t: 'standort', breite: 1, laenge: 1, genauigkeit: 5, zeit: zeit + 2 });
+            const antworten = await bisRechte(g);
+            expect(antworten.slice(0, 2).map(a => a.code)).to.deep.equal(['aus', 'aus']);
+            await pause(50);
+            expect(u.ablage.werte_.get(appId)).to.include({
+                'zonen.aktiv': false,
+                'zonen.grund': 'Im Admin ausgeschaltet',
+            });
+            expect(u.ablage.zonen_.get(appId)?.get('zuhause')).to.include({ drin: true, ts: zeit });
+            expect(u.ablage.werte_.get(appId)).not.to.have.property('standort.json');
+            g.schliesse();
+        });
+
+        it('ein Stand, der vor dem Ausschalten kam, schreibt aktiv nicht dauerhaft wieder auf true', async () => {
+            const { g, appId } = await mitZonen(['zuhause']);
+            const zeit = vorhin();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === true);
+            // Wie raeumeZonenAuf im Dialog, dann erst die Freigabe in der Sitzung
+            await u.ablage.schreibe(appId, { 'zonen.aktiv': false, 'zonen.grund': 'Im Admin ausgeschaltet' });
+            g.sende({ t: 'zonenstand', aktiv: true, drin: [], zeit: zeit + 1 });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === true);
+            await aendereApp(appId, { handydaten: AUS });
+            await bisRechte(g);
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === false);
+            expect(u.ablage.werte_.get(appId)?.['zonen.grund']).to.equal('Im Admin ausgeschaltet');
+            g.schliesse();
+        });
+
+        it('Mengen je App: Eine neue Verbindung bringt keinen neuen Stoß', async () => {
+            u.quelle.zone('zuhause', ZUHAUSE);
+            const { g, appId, zugang } = await kopple('familie', 7);
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true, standort: true }, zonenwahl: ['zuhause'] });
+            await g.naechste();
+            const zeit = vorhin();
+            g.sende({ t: 'standort', breite: 1, laenge: 1, genauigkeit: 5, zeit });
+            g.sende({ t: 'standort', breite: 1, laenge: 1, genauigkeit: 5, zeit: zeit + 1 });
+            await bis(
+                () =>
+                    u.ablage.werte_
+                        .get(appId)
+                        ?.['standort.json']?.toString()
+                        .includes(`${zeit + 1}`) === true,
+            );
+            g.schliesse();
+            await bis(() => u.ablage.werte_.get(appId)?.online === false);
+            const wieder = await melde(appId, zugang, undefined, 7);
+            expect((await wieder.naechste()).t).to.equal('willkommen');
+            wieder.sende({ t: 'standort', breite: 1, laenge: 1, genauigkeit: 5, zeit: zeit + 2 });
+            expect(await wieder.naechste()).to.include({ t: 'fehler', code: 'zuviel' });
+            wieder.schliesse();
+        });
+
+        it('Entfernt oder mit Protokoll 6: zonen.aktiv false mit Grund, verbunden wie getrennt', async () => {
+            const zeit = vorhin();
+            const melde7 = async (): Promise<{ g: Gegenstelle; appId: string; zugang: string }> => {
+                const { g, appId } = await mitZonen(['zuhause']);
+                g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+                await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === true);
+                return { g, appId, zugang: '' };
+            };
+            const verbunden = await melde7();
+            await u.server.dienst.entferne(verbunden.appId);
+            await bis(() => u.ablage.werte_.get(verbunden.appId)?.['zonen.aktiv'] === false);
+            expect(u.ablage.werte_.get(verbunden.appId)?.['zonen.grund']).to.equal('App im Admin entfernt');
+
+            const getrennt = await melde7();
+            getrennt.g.schliesse();
+            await bis(() => u.ablage.werte_.get(getrennt.appId)?.online === false);
+            await u.server.dienst.entferne(getrennt.appId);
+            expect(u.ablage.werte_.get(getrennt.appId)).to.include({
+                'zonen.aktiv': false,
+                'zonen.grund': 'App im Admin entfernt',
+            });
+
+            // Eine ältere App meldet keine Zonen mehr
+            u.quelle.zone('zuhause', ZUHAUSE);
+            const { g, appId, zugang } = await kopple('familie', 7);
+            await aendereApp(appId, { handydaten: { ...AUS, zonen: true }, zonenwahl: ['zuhause'] });
+            await g.naechste();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit });
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === true);
+            g.schliesse();
+            await bis(() => u.ablage.werte_.get(appId)?.online === false);
+            const alt = await melde(appId, zugang, undefined, 6);
+            expect((await alt.naechste()).t).to.equal('willkommen');
+            await bis(() => u.ablage.werte_.get(appId)?.['zonen.aktiv'] === false);
+            expect(u.ablage.werte_.get(appId)?.['zonen.grund']).to.equal(
+                'Die App kennt keine Zonen, bitte aktualisieren',
+            );
+            alt.schliesse();
+        });
+
+        it('Anmeldung räumt Datenpunkte gelöschter Zonen auf; eine unbrauchbare Zone behält ihren', async () => {
+            const { g, appId, zugang } = await (async () => {
+                u.quelle.zone('zuhause', ZUHAUSE).zone('arbeit', ARBEIT);
+                const k = await kopple('familie', 7);
+                await aendereApp(k.appId, { handydaten: { ...AUS, zonen: true }, zonenwahl: ['zuhause', 'arbeit'] });
+                await k.g.naechste();
+                return k;
+            })();
+            g.sende({ t: 'zonenstand', aktiv: true, drin: ['zuhause'], zeit: vorhin() });
+            await bis(() => zonenpunkte(appId).length === 2);
+            // Verbunden: Ein Tippfehler im Objektbrowser macht eine Zone unbrauchbar, ihr Datenpunkt bleibt
+            u.quelle.zone('zuhause', { ...ZUHAUSE, radius: 50 });
+            expect((await g.naechste()).zonen.map((z: { id: string }) => z.id)).to.deep.equal(['arbeit']);
+            await pause(50);
+            expect(zonenpunkte(appId)).to.deep.equal(['arbeit', 'zuhause']);
+            g.schliesse();
+            await bis(() => u.ablage.werte_.get(appId)?.online === false);
+            // Getrennt im Objektbrowser gelöscht
+            u.quelle.zone('arbeit', null);
+            const wieder = await melde(appId, zugang, undefined, 7);
+            expect((await wieder.naechste()).t).to.equal('willkommen');
+            await bis(() => zonenpunkte(appId).length === 1);
+            expect(zonenpunkte(appId)).to.deep.equal(['zuhause']);
+            wieder.schliesse();
+        });
     });
 
     it('Anwesenheit: true über das Heimnetz, false erst nach dem Nachlauf, neue Anmeldung bricht ihn ab', async () => {

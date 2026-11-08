@@ -6,6 +6,7 @@ import { FERNBEFEHLE, type Fernbetrieb, Fernseite } from './admin/fernseite';
 import { KARTENBEFEHLE, Kartenseite } from './admin/kartenseite';
 import { PROFILBEFEHLE, Profilseite } from './admin/profilseite';
 import { RAUMBEFEHLE, Raumseite } from './admin/raumseite';
+import { ZONENBEFEHLE, Zonenseite } from './admin/zonenseite';
 import { type Ferneinstellung, istVermittleradresse } from './app/fernzugang';
 import { Katalog } from './app/katalog';
 import { IoBrokerAblage, IoBrokerQuelle, appIdAus } from './app/objekte';
@@ -65,6 +66,14 @@ class MyzelApp extends utils.Adapter {
             [PROFILBEFEHLE, new Profilseite(seite)],
             [RAUMBEFEHLE, new Raumseite(seite)],
             [FERNBEFEHLE, new Fernseite({ namespace: this.namespace, betrieb: () => this.fernbetrieb() })],
+            [
+                ZONENBEFEHLE,
+                new Zonenseite({
+                    ...seite,
+                    apps: () => this.betrieb?.ablage,
+                    vorschlaege: () => this.betrieb?.dienst.mittelpunktvorschlaege() ?? [],
+                }),
+            ],
         ];
         try {
             await this.starte();
@@ -147,7 +156,7 @@ class MyzelApp extends utils.Adapter {
         }
     }
 
-    // Die Seiten in den Reitern Karten, Räume und Profile (admin/jsonConfig.json)
+    // Die Seiten in den Reitern Karten, Räume, Profile, Fernzugang und Zonen (admin/jsonConfig.json)
     private async beantworte(obj: ioBroker.Message): Promise<void> {
         const seite = this.seiten.find(([befehle]) => befehle.includes(obj?.command))?.[1];
         if (!obj?.callback || !seite) {

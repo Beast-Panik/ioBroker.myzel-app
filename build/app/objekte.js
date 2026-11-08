@@ -31,7 +31,9 @@ __export(objekte_exports, {
   IoBrokerAblage: () => IoBrokerAblage,
   IoBrokerQuelle: () => IoBrokerQuelle,
   LETZTE: () => LETZTE,
+  ZONENFESTE: () => ZONENFESTE,
   appIdAus: () => appIdAus,
+  appstandAus: () => appstandAus,
   ordnerFuer: () => ordnerFuer
 });
 module.exports = __toCommonJS(objekte_exports);
@@ -47,8 +49,11 @@ const text = (de, en) => ({
 const KANAELE = {
   akku: { de: "Akku", en: "Battery" },
   anruf: { de: "Anruf", en: "Call" },
-  hinweis: { de: "Hinweis", en: "Notice" }
+  hinweis: { de: "Hinweis", en: "Notice" },
+  zonen: { de: "Zonen", en: "Zones" },
+  standort: { de: "Standort", en: "Location" }
 };
+const ZONENFESTE = ["letzte", "aktiv", "grund"];
 const DATENPUNKTE = {
   online: {
     name: { de: "Verbunden", en: "Connected" },
@@ -76,7 +81,37 @@ const DATENPUNKTE = {
   "anruf.nummer": { ...text("Rufnummer", "Phone number"), role: "text.phone" },
   "anruf.name": text("Name", "Name"),
   "hinweis.senden": { ...text("Hinweis senden", "Send notice"), write: true },
-  "hinweis.status": text("Hinweisstatus", "Notice state")
+  "hinweis.status": text("Hinweisstatus", "Notice state"),
+  "zonen.letzte": { ...text("Letzter Zonenwechsel als JSON", "Latest zone change as JSON"), role: "json" },
+  "zonen.aktiv": {
+    name: { de: "Erkennt Zonen", en: "Detects zones" },
+    type: "boolean",
+    role: "indicator",
+    ...nurLesen
+  },
+  "zonen.grund": text("Warum keine Zonen erkannt werden", "Why zones are not detected"),
+  "standort.breite": {
+    name: { de: "Breite", en: "Latitude" },
+    type: "number",
+    role: "value.gps.latitude",
+    unit: "\xB0",
+    ...nurLesen
+  },
+  "standort.laenge": {
+    name: { de: "L\xE4nge", en: "Longitude" },
+    type: "number",
+    role: "value.gps.longitude",
+    unit: "\xB0",
+    ...nurLesen
+  },
+  "standort.genauigkeit": {
+    name: { de: "Genauigkeit", en: "Accuracy" },
+    type: "number",
+    role: "value.gps.accuracy",
+    unit: "m",
+    ...nurLesen
+  },
+  "standort.json": { ...text("Standort als JSON", "Location as JSON"), role: "json" }
 };
 const BENACHRICHTIGUNG = {
   app: text("App", "App"),
@@ -109,32 +144,67 @@ function alsHinweisstand(n) {
 }
 const istText = (w) => typeof w === "string";
 const istJaNein = (w) => typeof w === "boolean";
+const istHash = (w) => istText(w) && /^[0-9a-f]{64}$/.test(w);
+function appstandAus(objekt) {
+  if (!objekt) {
+    return { art: "fehlt" };
+  }
+  const n = typeof objekt.native === "object" && objekt.native !== null ? objekt.native : void 0;
+  const daten = objekt.type === "device" && n ? alsAppDaten(n) : void 0;
+  if (daten) {
+    return { art: "da", daten };
+  }
+  const hash = n == null ? void 0 : n.zugangHash;
+  return istHash(hash) ? { art: "beschaedigt", zugangHash: hash } : { art: "beschaedigt" };
+}
 function alsAppDaten(n) {
   const h = n.handydaten;
   const g = n.geraet;
-  const gueltig = istText(n.name) && istText(n.zugangHash) && /^[0-9a-f]{64}$/.test(n.zugangHash) && istText(n.profil) && typeof n.gekoppeltAm === "number" && istJaNein(h == null ? void 0 : h.akku) && istJaNein(h == null ? void 0 : h.anruf) && istJaNein(h == null ? void 0 : h.benachrichtigung) && istText(g == null ? void 0 : g.android) && istText(g == null ? void 0 : g.appVersion) && (n.fern === void 0 || istJaNein(n.fern));
-  return gueltig ? { ...n, handydaten: { akku: h.akku, anruf: h.anruf, benachrichtigung: h.benachrichtigung } } : void 0;
+  const gueltig = istText(n.name) && istHash(n.zugangHash) && istText(n.profil) && typeof n.gekoppeltAm === "number" && istJaNein(h == null ? void 0 : h.akku) && istJaNein(h == null ? void 0 : h.anruf) && istJaNein(h == null ? void 0 : h.benachrichtigung) && istText(g == null ? void 0 : g.android) && istText(g == null ? void 0 : g.appVersion) && (n.fern === void 0 || istJaNein(n.fern)) && (h.zonen === void 0 || istJaNein(h.zonen)) && (h.standort === void 0 || istJaNein(h.standort));
+  const wahl = n.zonenwahl;
+  return gueltig ? {
+    ...n,
+    handydaten: {
+      akku: h.akku,
+      anruf: h.anruf,
+      benachrichtigung: h.benachrichtigung,
+      zonen: h.zonen === true,
+      standort: h.standort === true
+    },
+    zonenwahl: Array.isArray(wahl) ? wahl.filter(istText) : []
+  } : void 0;
 }
 const ORDNERNAMEN = {
   karten: { de: "Karten f\xFCr die Apps", en: "Cards for the apps" },
   profile: { de: "Profile f\xFCr die Apps", en: "Profiles for the apps" },
-  etagen: { de: "Etagen f\xFCr die Apps", en: "Floors for the apps" }
+  etagen: { de: "Etagen f\xFCr die Apps", en: "Floors for the apps" },
+  zonen: { de: "Zonen f\xFCr die Apps", en: "Zones for the apps" }
 };
 class IoBrokerAblage {
   constructor(adapter) {
     this.adapter = adapter;
   }
   angelegt = /* @__PURE__ */ new Set();
+  zonennamen = /* @__PURE__ */ new Map();
+  // Apps, deren Objekt beim letzten Lesen beschädigt war: Gewarnt wird einmal, nicht bei jedem Versuch der App.
+  beschaedigt = /* @__PURE__ */ new Set();
   async lies(appId) {
-    const objekt = await this.adapter.getObjectAsync(`apps.${appId}`);
-    if ((objekt == null ? void 0 : objekt.type) !== "device") {
-      return void 0;
+    const stand = await this.stand(appId);
+    return stand.art === "da" ? stand.daten : void 0;
+  }
+  async stand(appId) {
+    const stand = appstandAus(await this.adapter.getObjectAsync(`apps.${appId}`));
+    if (stand.art === "beschaedigt") {
+      if (!this.beschaedigt.has(appId)) {
+        this.beschaedigt.add(appId);
+        this.adapter.log.warn(
+          `Objekt der App ${appId} ist besch\xE4digt: Sie kann sich nicht anmelden, bleibt aber gekoppelt und versucht es weiter. Objekt reparieren oder, um sie zu entkoppeln, l\xF6schen.`
+        );
+      }
+    } else if (this.beschaedigt.delete(appId) && stand.art === "da") {
+      this.adapter.log.info(`Objekt der App ${appId} ist wieder lesbar`);
     }
-    const daten = alsAppDaten(objekt.native);
-    if (!daten) {
-      this.adapter.log.warn(`Objekt der App ${appId} ist besch\xE4digt, die App gilt als unbekannt`);
-    }
-    return daten;
+    return stand;
   }
   async alle() {
     const praefix = `${this.adapter.namespace}.apps.`;
@@ -199,6 +269,48 @@ class IoBrokerAblage {
       await this.adapter.setStateAsync(`${kanal}.${n}`, { val, ack: true, ts });
     }
   }
+  // Name je Zone; geschrieben nur, wenn er sich geändert hat
+  async schreibeZone(appId, zone, name, drin, ts) {
+    var _a;
+    const id = `apps.${appId}.zonen.${zone}`;
+    if (!this.angelegt.has(id) || this.zonennamen.get(id) !== name) {
+      await this.sichereKanal(appId, "zonen");
+      const common = { name, type: "boolean", role: "indicator", ...nurLesen };
+      const alt = await this.adapter.getObjectAsync(id);
+      if ((alt == null ? void 0 : alt.type) !== "state") {
+        await this.adapter.setObjectAsync(id, { type: "state", common, native: {} });
+      } else if (((_a = alt.common) == null ? void 0 : _a.name) !== name) {
+        await this.adapter.setObjectAsync(id, { ...alt, common: { ...alt.common, ...common } });
+      }
+      this.angelegt.add(id);
+      this.zonennamen.set(id, name);
+    }
+    await this.adapter.setStateAsync(id, { val: drin, ack: true, ts });
+  }
+  async zonenpunkte(appId) {
+    const praefix = `${this.adapter.namespace}.apps.${appId}.zonen.`;
+    const ansicht = await this.adapter.getObjectViewAsync("system", "state", {
+      startkey: praefix,
+      endkey: `${praefix}\u9999`
+    });
+    return ansicht.rows.map((r) => r.id.slice(praefix.length)).filter((zone) => zone.length > 0 && !zone.includes(".") && !ZONENFESTE.includes(zone));
+  }
+  async entferneZone(appId, zone) {
+    const id = `apps.${appId}.zonen.${zone}`;
+    await this.adapter.delObjectAsync(id);
+    this.angelegt.delete(id);
+    this.zonennamen.delete(id);
+  }
+  async benenneZone(appId, zone, name) {
+    const id = `apps.${appId}.zonen.${zone}`;
+    const alt = await this.adapter.getObjectAsync(id);
+    if ((alt == null ? void 0 : alt.type) === "state" && alt.common.name !== name) {
+      await this.adapter.setObjectAsync(id, { ...alt, common: { ...alt.common, name } });
+    }
+    if ((alt == null ? void 0 : alt.type) === "state") {
+      this.zonennamen.set(id, name);
+    }
+  }
   async hinweise(appId) {
     var _a;
     return alsHinweisstand((_a = await this.adapter.getObjectAsync(`apps.${appId}.hinweis`)) == null ? void 0 : _a.native);
@@ -212,8 +324,14 @@ class IoBrokerAblage {
       native: stand
     });
   }
+  // Das ganze Objekt neu, jedes Feld aus daten ersetzt das alte ganz: extendObject führte Listen wie zonenwahl
+  // stellenweise zusammen und behielte Schlüssel, die es nicht mehr gibt.
   async aendere(appId, daten) {
-    await this.adapter.extendObjectAsync(`apps.${appId}`, { native: daten });
+    const objekt = await this.adapter.getObjectAsync(`apps.${appId}`);
+    if ((objekt == null ? void 0 : objekt.type) !== "device") {
+      return;
+    }
+    await this.adapter.setObjectAsync(`apps.${appId}`, { ...objekt, native: { ...objekt.native, ...daten } });
     if (daten.profil !== void 0) {
       await this.schreibe(appId, { profil: daten.profil });
     }
@@ -222,6 +340,7 @@ class IoBrokerAblage {
     await this.adapter.delObjectAsync(`apps.${appId}.hinweis`, { recursive: true });
     await this.adapter.delObjectAsync(`apps.${appId}`);
     [...this.angelegt].filter((id) => id.startsWith(`apps.${appId}.`)).forEach((id) => this.angelegt.delete(id));
+    [...this.zonennamen.keys()].filter((id) => id.startsWith(`apps.${appId}.`)).forEach((id) => this.zonennamen.delete(id));
   }
   async leereEinstellungen() {
     await this.adapter.updateConfig({ karten: [], profile: [] });
@@ -285,13 +404,21 @@ class IoBrokerAblage {
     }
     const kanal = name.includes(".") ? name.slice(0, name.indexOf(".")) : void 0;
     if (kanal) {
-      await this.adapter.setObjectNotExistsAsync(`apps.${appId}.${kanal}`, {
-        type: "channel",
-        common: { name: KANAELE[kanal] },
-        native: {}
-      });
+      await this.sichereKanal(appId, kanal);
     }
     await this.adapter.setObjectNotExistsAsync(id, { type: "state", common: DATENPUNKTE[name], native: {} });
+    this.angelegt.add(id);
+  }
+  async sichereKanal(appId, kanal) {
+    const id = `apps.${appId}.${kanal}`;
+    if (this.angelegt.has(id)) {
+      return;
+    }
+    await this.adapter.setObjectNotExistsAsync(id, {
+      type: "channel",
+      common: { name: KANAELE[kanal] },
+      native: {}
+    });
     this.angelegt.add(id);
   }
 }
@@ -354,7 +481,9 @@ class IoBrokerQuelle {
   IoBrokerAblage,
   IoBrokerQuelle,
   LETZTE,
+  ZONENFESTE,
   appIdAus,
+  appstandAus,
   ordnerFuer
 });
 //# sourceMappingURL=objekte.js.map

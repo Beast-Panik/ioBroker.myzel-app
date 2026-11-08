@@ -4,16 +4,19 @@ import { Katalog, type Katalogquelle } from '../src/app/katalog';
 import {
     type AppDaten,
     type Appablage,
+    type Appstand,
     type Appwerte,
     type Benachrichtigungswerte,
     type Datenpunktname,
     type Hinweisstand,
     LETZTE,
     type Ordner,
+    appstandAus,
 } from '../src/app/objekte';
 import type { Etage, Karte, Profil } from '../src/app/rechte';
 import type { Umstellungsablage } from '../src/app/umstellung';
 import type { Wert, Zustandsquelle } from '../src/app/werte';
+import type { Zone } from '../src/app/zonen';
 
 export const NAMESPACE = 'myzel-app.0';
 const still: Protokoll = {
@@ -25,11 +28,15 @@ const still: Protokoll = {
 
 export class Speicherablage implements Appablage, Umstellungsablage {
     public readonly apps = new Map<string, AppDaten>();
+    // Wie nach einem fehlerhaften object set: dieses Objekt statt der Daten in apps
+    public readonly beschaedigt_ = new Map<string, { type?: string; native?: unknown }>();
     public readonly werte_ = new Map<string, Appwerte>();
     public readonly zustaende_ = new Map<string, ioBroker.State>();
     public readonly hinweise_ = new Map<string, Hinweisstand>();
     // Je App die Ordner unter benachrichtigungen mit ihrem Namen, letzte eingeschlossen
     public readonly ordner_ = new Map<string, Map<string, string>>();
+    // Je App die Datenpunkte unter zonen mit Name und Wert, ohne letzte, aktiv und grund
+    public readonly zonen_ = new Map<string, Map<string, { name: string; drin: boolean; ts: number }>>();
     // Reihenfolge der Schreibvorgänge mit ts, je Eintrag "<appId>.<name>=<wert>@<ts>"
     public readonly geschrieben: string[] = [];
     // Für Tests, die ein Scheitern der Datenbank brauchen
@@ -42,14 +49,23 @@ export class Speicherablage implements Appablage, Umstellungsablage {
         karten: new Map(),
         profile: new Map(),
         etagen: new Map(),
+        zonen: new Map(),
     };
 
     // Mit quelle wie in ioBroker: Änderungen an Apps und Profilen kommen als objectChange beim Katalog an.
     public constructor(private readonly quelle?: Speicherquelle) {}
 
     public lies(appId: string): Promise<AppDaten | undefined> {
-        const daten = this.apps.get(appId);
+        const daten = this.beschaedigt_.has(appId) ? undefined : this.apps.get(appId);
         return Promise.resolve(daten && structuredClone(daten));
+    }
+    public stand(appId: string): Promise<Appstand> {
+        const objekt = this.beschaedigt_.get(appId);
+        if (objekt) {
+            return Promise.resolve(appstandAus(objekt));
+        }
+        const daten = this.apps.get(appId);
+        return Promise.resolve(daten ? { art: 'da', daten: structuredClone(daten) } : { art: 'fehlt' });
     }
     public alle(): Promise<string[]> {
         return Promise.resolve([...this.apps.keys()]);
@@ -133,6 +149,30 @@ export class Speicherablage implements Appablage, Umstellungsablage {
         return Promise.resolve(this.zustaende_.get(`${appId}.${name}`));
     }
     public richteEin(): Promise<void> {
+        return Promise.resolve();
+    }
+    public schreibeZone(appId: string, zone: string, name: string, drin: boolean, ts: number): Promise<void> {
+        if (this.scheitern) {
+            return Promise.reject(new Error('Datenbank weg'));
+        }
+        const je = this.zonen_.get(appId) ?? new Map<string, { name: string; drin: boolean; ts: number }>();
+        je.set(zone, { name, drin, ts });
+        this.zonen_.set(appId, je);
+        this.geschrieben.push(`${appId}.zonen.${zone}=${String(drin)}@${ts}`);
+        return Promise.resolve();
+    }
+    public zonenpunkte(appId: string): Promise<string[]> {
+        return Promise.resolve([...(this.zonen_.get(appId)?.keys() ?? [])]);
+    }
+    public entferneZone(appId: string, zone: string): Promise<void> {
+        this.zonen_.get(appId)?.delete(zone);
+        return Promise.resolve();
+    }
+    public benenneZone(appId: string, zone: string, name: string): Promise<void> {
+        const z = this.zonen_.get(appId)?.get(zone);
+        if (z) {
+            z.name = name;
+        }
         return Promise.resolve();
     }
     public benachrichtigungsordner(appId: string): Promise<string[]> {
@@ -248,6 +288,9 @@ export class Speicherquelle implements Zustandsquelle, Katalogquelle {
     }
     public etage(etagenId: string, etage: Etage | null): this {
         return this.eintrag('etagen', etagenId, etage?.name ?? '', etage);
+    }
+    public zone(zonenId: string, zone: Zone | null): this {
+        return this.eintrag('zonen', zonenId, zone?.name ?? '', zone);
     }
     public eintrag(ordner: Ordner, id: string, name: string, native: object | null): this {
         return this.objekt_(

@@ -19,5 +19,7 @@
     "Profiles page offline": "Die Profilseite braucht die laufende Instanz. Instanz starten, dann diese Seite neu laden.",
     "Remote access": "Fernzugang",
     "Remote access page offline": "Die Seite für den Fernzugang braucht die laufende Instanz. Instanz starten, dann diese Seite neu laden.",
-    "Settings": "Einstellungen"
+    "Settings": "Einstellungen",
+    "Zones": "Zonen",
+    "Zones page offline": "Die Zonenseite braucht die laufende Instanz. Instanz starten, dann diese Seite neu laden."
 }

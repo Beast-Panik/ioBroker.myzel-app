@@ -38,7 +38,7 @@ function umgebung(quelle: Katalogquelle = quelleAus([])): {
 }
 
 describe('Katalog', () => {
-    it('lädt Datenpunkte, Räume, Karten, Profile, Etagen und Systemsprache mit sechs Abfragen; Geräte zählen nicht', async () => {
+    it('lädt Datenpunkte, Räume, Karten, Profile, Etagen, Zonen und Systemsprache mit sieben Abfragen; Geräte zählen nicht', async () => {
         const abfragen: string[] = [];
         const { katalog } = umgebung(
             quelleAus(
@@ -67,6 +67,7 @@ describe('Katalog', () => {
             `config ${NAMESPACE}.karten.`,
             `config ${NAMESPACE}.profile.`,
             `config ${NAMESPACE}.etagen.`,
+            `config ${NAMESPACE}.zonen.`,
         ]);
         expect(katalog.anzahl).to.equal(3);
         expect(katalog.datenpunkt('a.b-c.d')?.type).to.equal('number');

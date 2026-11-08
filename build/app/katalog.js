@@ -23,6 +23,7 @@ __export(katalog_exports, {
 module.exports = __toCommonJS(katalog_exports);
 var import_objekte = require("./objekte");
 var import_rechte = require("./rechte");
+var import_zonen = require("./zonen");
 const SPRACHE = "en";
 const EINTRAEGE = {
   karten: { pruefe: import_rechte.alsKarte, unbrauchbar: (id) => `Karte ${id} ist unbrauchbar und fehlt auf den Handys` },
@@ -30,7 +31,8 @@ const EINTRAEGE = {
   etagen: {
     pruefe: import_rechte.alsEtage,
     unbrauchbar: (id) => `Etage ${id} ist unbrauchbar, ihre R\xE4ume stehen ohne Etage`
-  }
+  },
+  zonen: { pruefe: import_zonen.alsZone, unbrauchbar: (id) => `Zone ${id} ist unbrauchbar und fehlt auf den Handys` }
 };
 class Katalog {
   constructor(namespace, log, quelle) {
@@ -47,14 +49,22 @@ class Katalog {
   eintraege = {
     karten: /* @__PURE__ */ new Map(),
     profile: /* @__PURE__ */ new Map(),
-    etagen: /* @__PURE__ */ new Map()
+    etagen: /* @__PURE__ */ new Map(),
+    zonen: /* @__PURE__ */ new Map()
   };
+  zonenSortiert;
+  // Zonen, deren Objekt es gibt, die aber gerade unbrauchbar sind: Sie fehlen auf den Handys, gelten aber nicht als
+  // gelöscht, sonst verlören ihre Datenpunkte bei einem Tippfehler im Objektbrowser die Einstellungen etwa für History.
+  zonenUnbrauchbar = /* @__PURE__ */ new Set();
+  // Breite und Länge aus den Systemeinstellungen, für „Zuhause“ im Reiter Zonen
+  systemort;
   etagenSortiert;
   kartenSortiert;
   profileSortiert;
   puffer;
   laden = Promise.resolve();
   hoerer = () => void 0;
+  appHoerer = () => void 0;
   // Erst abonnieren, dann laden: Änderungen während des Ladens hält der Katalog zurück und wendet sie danach an,
   // sonst überschriebe der ältere Ladestand sie. Nacheinander, sonst nähme ein zweites Laden dem ersten den Puffer.
   lade() {
@@ -70,7 +80,8 @@ class Katalog {
         this.quelle.objekte("enum", "enum.rooms."),
         this.quelle.objekte("config", `${this.namespace}.karten.`),
         this.quelle.objekte("config", `${this.namespace}.profile.`),
-        this.quelle.objekte("config", `${this.namespace}.etagen.`)
+        this.quelle.objekte("config", `${this.namespace}.etagen.`),
+        this.quelle.objekte("config", `${this.namespace}.zonen.`)
       ]);
       for (const objekt of listen.flat()) {
         this.uebernimmSicher(objekt._id, objekt);
@@ -85,7 +96,15 @@ class Katalog {
   beiAenderung(hoerer) {
     this.hoerer = hoerer;
   }
+  // Jede Änderung am Objekt einer App sofort, vor der gesammelten Neuberechnung
+  beiApp(hoerer) {
+    this.appHoerer = hoerer;
+  }
   geaendert(id, objekt) {
+    const appId = (0, import_objekte.appIdAus)(this.namespace, id);
+    if (appId) {
+      this.appHoerer(appId, objekt);
+    }
     if (this.puffer) {
       this.puffer.push([id, objekt]);
       return;
@@ -107,6 +126,24 @@ class Katalog {
       ([a, x], [b, y]) => x.name.localeCompare(y.name) || a.localeCompare(b)
     );
     return this.profileSortiert;
+  }
+  // Nur brauchbare Zonen, nach Namen sortiert
+  zonen() {
+    var _a;
+    (_a = this.zonenSortiert) != null ? _a : this.zonenSortiert = [...this.eintraege.zonen].sort(
+      ([a, x], [b, y]) => x.name.localeCompare(y.name, this.sprache) || a.localeCompare(b)
+    );
+    return this.zonenSortiert;
+  }
+  zone(zonenId) {
+    return this.eintraege.zonen.get(zonenId);
+  }
+  // Ob es das Objekt der Zone gibt, auch wenn sie gerade unbrauchbar ist
+  gibtZone(zonenId) {
+    return this.eintraege.zonen.has(zonenId) || this.zonenUnbrauchbar.has(zonenId);
+  }
+  zuhause() {
+    return this.systemort;
   }
   karten() {
     var _a;
@@ -167,6 +204,7 @@ class Katalog {
   uebernimm(id, objekt) {
     var _a, _b, _c;
     if (id === "system.config") {
+      this.systemort = ortAus(objekt == null ? void 0 : objekt.common);
       const sprache = (_a = objekt == null ? void 0 : objekt.common) == null ? void 0 : _a.language;
       const neu = typeof sprache === "string" && sprache !== "" ? sprache : SPRACHE;
       if (neu === this.sprache) {
@@ -186,7 +224,7 @@ class Katalog {
     if ((0, import_objekte.appIdAus)(this.namespace, id)) {
       return true;
     }
-    for (const ordner of ["karten", "profile", "etagen"]) {
+    for (const ordner of ["karten", "profile", "etagen", "zonen"]) {
       const praefix = `${this.namespace}.${ordner}.`;
       if (id.startsWith(praefix)) {
         return this.uebernimmEintrag(ordner, id.slice(praefix.length), objekt);
@@ -210,25 +248,42 @@ class Katalog {
   }
   // Ein unbrauchbarer Eintrag fehlt, bis er wieder passt; was darunter liegt, etwa ein Datenpunkt, ist keiner.
   uebernimmEintrag(ordner, id, objekt) {
-    if (!(0, import_rechte.istKennung)(id)) {
+    if (ordner === "zonen" ? !(0, import_zonen.istZonenId)(id) : !(0, import_rechte.istKennung)(id)) {
       return false;
     }
     this.kartenSortiert = void 0;
     this.profileSortiert = void 0;
     this.etagenSortiert = void 0;
     this.raeumeSortiert = void 0;
+    this.zonenSortiert = void 0;
     const eintraege = this.eintraege[ordner];
+    if (ordner === "zonen") {
+      this.zonenUnbrauchbar.delete(id);
+    }
     if ((objekt == null ? void 0 : objekt.type) !== "config") {
       return eintraege.delete(id);
     }
     const eintrag = EINTRAEGE[ordner].pruefe(objekt.native);
     if (Array.isArray(eintrag)) {
       this.log.warn(`${EINTRAEGE[ordner].unbrauchbar(id)}: ${eintrag.join("; ")}`);
+      if (ordner === "zonen") {
+        this.zonenUnbrauchbar.add(id);
+      }
       return eintraege.delete(id);
     }
     eintraege.set(id, structuredClone(eintrag));
     return true;
   }
+}
+function ortAus(common) {
+  const c = common;
+  const zahl = (w) => typeof w === "number" ? w : typeof w === "string" && w.trim() !== "" ? Number(w) : NaN;
+  const breite = zahl(c == null ? void 0 : c.latitude);
+  const laenge = zahl(c == null ? void 0 : c.longitude);
+  if (!Number.isFinite(breite) || !Number.isFinite(laenge) || Math.abs(breite) > 90 || Math.abs(laenge) > 180) {
+    return void 0;
+  }
+  return breite === 0 && laenge === 0 ? void 0 : { breite, laenge };
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

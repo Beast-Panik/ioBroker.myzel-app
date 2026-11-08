@@ -15,6 +15,7 @@ import {
     merkmale,
     text,
 } from './rechte';
+import { type Zone, alsZone, istZonenId } from './zonen';
 
 // Wie Admin: Englisch, solange im System keine Sprache gesetzt ist
 const SPRACHE = 'en';
@@ -35,6 +36,7 @@ const EINTRAEGE = {
         pruefe: alsEtage,
         unbrauchbar: (id: string) => `Etage ${id} ist unbrauchbar, ihre Räume stehen ohne Etage`,
     },
+    zonen: { pruefe: alsZone, unbrauchbar: (id: string) => `Zone ${id} ist unbrauchbar und fehlt auf den Handys` },
 } satisfies Record<Ordner, { pruefe: (native: unknown) => unknown; unbrauchbar: (id: string) => string }>;
 
 /**
@@ -53,13 +55,21 @@ export class Katalog implements Objektquelle {
         karten: new Map<string, Karte>(),
         profile: new Map<string, Profil>(),
         etagen: new Map<string, Etage>(),
+        zonen: new Map<string, Zone>(),
     };
+    private zonenSortiert?: [string, Zone][];
+    // Zonen, deren Objekt es gibt, die aber gerade unbrauchbar sind: Sie fehlen auf den Handys, gelten aber nicht als
+    // gelöscht, sonst verlören ihre Datenpunkte bei einem Tippfehler im Objektbrowser die Einstellungen etwa für History.
+    private readonly zonenUnbrauchbar = new Set<string>();
+    // Breite und Länge aus den Systemeinstellungen, für „Zuhause“ im Reiter Zonen
+    private systemort?: { breite: number; laenge: number };
     private etagenSortiert?: [string, Etage][];
     private kartenSortiert?: [string, Karte][];
     private profileSortiert?: [string, Profil][];
     private puffer?: [string, Objektaenderung][];
     private laden: Promise<void> = Promise.resolve();
     private hoerer: () => void = () => undefined;
+    private appHoerer: (appId: string, objekt: Objektaenderung) => void = () => undefined;
 
     public constructor(
         private readonly namespace: string,
@@ -87,6 +97,7 @@ export class Katalog implements Objektquelle {
                 this.quelle.objekte('config', `${this.namespace}.karten.`),
                 this.quelle.objekte('config', `${this.namespace}.profile.`),
                 this.quelle.objekte('config', `${this.namespace}.etagen.`),
+                this.quelle.objekte('config', `${this.namespace}.zonen.`),
             ]);
             for (const objekt of listen.flat()) {
                 this.uebernimmSicher(objekt._id, objekt);
@@ -103,7 +114,17 @@ export class Katalog implements Objektquelle {
         this.hoerer = hoerer;
     }
 
+    // Jede Änderung am Objekt einer App sofort, vor der gesammelten Neuberechnung
+    public beiApp(hoerer: (appId: string, objekt: Objektaenderung) => void): void {
+        this.appHoerer = hoerer;
+    }
+
     public geaendert(id: string, objekt: Objektaenderung): void {
+        // Auch während des Ladens gleich: Ausschalten soll nicht auf den Katalog warten
+        const appId = appIdAus(this.namespace, id);
+        if (appId) {
+            this.appHoerer(appId, objekt);
+        }
         if (this.puffer) {
             this.puffer.push([id, objekt]);
             return;
@@ -127,6 +148,27 @@ export class Katalog implements Objektquelle {
             ([a, x], [b, y]) => x.name.localeCompare(y.name) || a.localeCompare(b),
         );
         return this.profileSortiert;
+    }
+
+    // Nur brauchbare Zonen, nach Namen sortiert
+    public zonen(): [string, Zone][] {
+        this.zonenSortiert ??= [...this.eintraege.zonen].sort(
+            ([a, x], [b, y]) => x.name.localeCompare(y.name, this.sprache) || a.localeCompare(b),
+        );
+        return this.zonenSortiert;
+    }
+
+    public zone(zonenId: string): Zone | undefined {
+        return this.eintraege.zonen.get(zonenId);
+    }
+
+    // Ob es das Objekt der Zone gibt, auch wenn sie gerade unbrauchbar ist
+    public gibtZone(zonenId: string): boolean {
+        return this.eintraege.zonen.has(zonenId) || this.zonenUnbrauchbar.has(zonenId);
+    }
+
+    public zuhause(): { breite: number; laenge: number } | undefined {
+        return this.systemort;
     }
 
     public karten(): [string, Karte][] {
@@ -195,6 +237,7 @@ export class Katalog implements Objektquelle {
     // true, wenn sich etwas geändert haben kann, das Rechte einer App betrifft
     private uebernimm(id: string, objekt: Objektaenderung): boolean {
         if (id === 'system.config') {
+            this.systemort = ortAus(objekt?.common);
             const sprache = (objekt?.common as { language?: unknown } | undefined)?.language;
             const neu = typeof sprache === 'string' && sprache !== '' ? sprache : SPRACHE;
             if (neu === this.sprache) {
@@ -218,7 +261,7 @@ export class Katalog implements Objektquelle {
         if (appIdAus(this.namespace, id)) {
             return true;
         }
-        for (const ordner of ['karten', 'profile', 'etagen'] as const) {
+        for (const ordner of ['karten', 'profile', 'etagen', 'zonen'] as const) {
             const praefix = `${this.namespace}.${ordner}.`;
             if (id.startsWith(praefix)) {
                 return this.uebernimmEintrag(ordner, id.slice(praefix.length), objekt);
@@ -243,23 +286,43 @@ export class Katalog implements Objektquelle {
 
     // Ein unbrauchbarer Eintrag fehlt, bis er wieder passt; was darunter liegt, etwa ein Datenpunkt, ist keiner.
     private uebernimmEintrag(ordner: Ordner, id: string, objekt: Objektaenderung): boolean {
-        if (!istKennung(id)) {
+        if (ordner === 'zonen' ? !istZonenId(id) : !istKennung(id)) {
             return false;
         }
         this.kartenSortiert = undefined;
         this.profileSortiert = undefined;
         this.etagenSortiert = undefined;
         this.raeumeSortiert = undefined;
+        this.zonenSortiert = undefined;
         const eintraege: Map<string, unknown> = this.eintraege[ordner];
+        if (ordner === 'zonen') {
+            this.zonenUnbrauchbar.delete(id);
+        }
         if (objekt?.type !== 'config') {
             return eintraege.delete(id);
         }
         const eintrag = EINTRAEGE[ordner].pruefe(objekt.native);
         if (Array.isArray(eintrag)) {
             this.log.warn(`${EINTRAEGE[ordner].unbrauchbar(id)}: ${eintrag.join('; ')}`);
+            if (ordner === 'zonen') {
+                this.zonenUnbrauchbar.add(id);
+            }
             return eintraege.delete(id);
         }
         eintraege.set(id, structuredClone(eintrag));
         return true;
     }
+}
+
+// Breite und Länge der Systemeinstellungen; ioBroker speichert sie je nach Alter als Zahl oder Text, 0 und 0 heißt leer.
+function ortAus(common: unknown): { breite: number; laenge: number } | undefined {
+    const c = common as { latitude?: unknown; longitude?: unknown } | undefined;
+    const zahl = (w: unknown): number =>
+        typeof w === 'number' ? w : typeof w === 'string' && w.trim() !== '' ? Number(w) : NaN;
+    const breite = zahl(c?.latitude);
+    const laenge = zahl(c?.longitude);
+    if (!Number.isFinite(breite) || !Number.isFinite(laenge) || Math.abs(breite) > 90 || Math.abs(laenge) > 180) {
+        return undefined;
+    }
+    return breite === 0 && laenge === 0 ? undefined : { breite, laenge };
 }
